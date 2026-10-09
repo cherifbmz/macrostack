@@ -1,0 +1,73 @@
+name: Build iPhone app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen generate --spec project.yml
+      - name: Select an available iPhone simulator
+        run: |
+          xcrun simctl list devices available --json > /tmp/macrostack-simulators.json
+          python3 scripts/choose_simulator.py /tmp/macrostack-simulators.json >> "$GITHUB_ENV"
+      - name: Test image processing
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project MacroStack.xcodeproj \
+            -scheme MacroStack \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -derivedDataPath build/simulator \
+            -resultBundlePath build/StackTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee build-tests.log
+      - name: Build unsigned device app
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project MacroStack.xcodeproj \
+            -scheme MacroStack \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/device \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee build-device.log
+      - name: Package for local signing with AltStore
+        run: |
+          mkdir -p build/package/Payload
+          ditto build/device/Build/Products/Release-iphoneos/MacroStack.app build/package/Payload/MacroStack.app
+          cd build/package
+          /usr/bin/zip -q -r ../MacroStack-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MacroStack-unsigned
+          path: build/MacroStack-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - name: Keep test results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics
+          path: |
+            build/StackTests.xcresult
+            build-tests.log
+            build-device.log
+          if-no-files-found: ignore
+          retention-days: 7
+
