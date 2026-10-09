@@ -2,7 +2,7 @@
 
 A native iOS camera prototype for the iPhone 13 Pro Max. It combines **focus stacking** and **multi-frame noise reduction**, with processing on the phone.
 
-**Status:** source project prepared on Windows. It has not yet been compiled with Xcode or tested on a physical iPhone. The included GitHub Actions workflow runs the image-processing tests and builds an installable package for local signing. This is an experimental starting point, not a verified production camera app.
+**Status:** the first cloud build passed on October 9, 2026: **6 image-processing tests passed, 0 failures**, and the Release build for a physical iPhone succeeded. [View the verified build and download its artifact](https://github.com/cherifbmz/macrostack/actions/runs/37979553842). The IPA is unsigned and needs local signing through AltStore. Physical iPhone camera behavior and photo quality still need testing; this is an experimental prototype.
 
 Start with [SETUP.md](SETUP.md) to build and install without owning a Mac.
 
@@ -68,7 +68,7 @@ GitHub builds compile the source code. No captured photos or Apple ID credential
 
 ## Verification
 
-The simulator tests cover linear-light averaging, noise reduction, recovery of sharp detail from different focus planes, the direction of a known registration shift, output sizing, and rejection of unfinished output. They are included in the cloud workflow and have not been run on Windows.
+The simulator tests cover linear-light averaging, noise reduction, recovery of sharp detail from different focus planes, the direction of a known registration shift, output sizing, and rejection of unfinished output. All six passed in [cloud run 37979553842](https://github.com/cherifbmz/macrostack/actions/runs/37979553842), for source commit `177e2e06763525af63f73cc03cbf55713fa05322`. The device Release build also passed. Compiler warnings remain for the legacy Core Image kernel initializer and Swift concurrency annotations; these are future maintenance work.
 
 Local checks passed for project/workflow YAML parsing, simulator selection with available and unavailable devices, the empty-simulator error, asset JSON, and the icon's size/color format. These checks do not establish that the Swift code compiles or that camera/image processing works on iOS.
 

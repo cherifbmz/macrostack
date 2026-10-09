@@ -4,6 +4,8 @@ The free route uses **your Windows PC + GitHub's cloud Mac + your iPhone**. A re
 
 This assumes you can connect your iPhone to the Windows PC. If you literally only have access to the iPhone and cannot use a computer, this particular installation route is not available.
 
+**Your first build is already complete.** The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack), and [this build passed all six tests and produced the iPhone IPA](https://github.com/cherifbmz/macrostack/actions/runs/37979553842). A downloaded copy is in this project's `build/MacroStack-unsigned.ipa`. **Start at step 3 below** to install AltStore, then import the IPA. Steps 1 and 2 are retained for rebuilding or making your own copy.
+
 ## 1. Put the source in your GitHub account
 
 Create an empty repository named `macrostack` in your GitHub account.
@@ -25,7 +27,7 @@ git push -u origin main
 
 Sign into GitHub through your Git client's normal authentication flow. If Git asks for a commit name/email, configure the identity you want associated with the code, then repeat the commit. If a remote named `origin` already exists, inspect it with `git remote -v` instead of adding it again.
 
-Nothing has been uploaded automatically by this project setup.
+The current source has already been uploaded to `cherifbmz/macrostack` with your approval.
 
 ## 2. Build the app on GitHub's Mac
 
@@ -37,7 +39,7 @@ Nothing has been uploaded automatically by this project setup.
 
 The unsigned IPA cannot be installed just by tapping it. AltStore signs it for your Apple ID in the next step.
 
-The source has not yet had its first cloud compilation. If the workflow fails, download `build-diagnostics` or copy the first compiler/test error and bring it back to this chat. Do not bypass failing image tests to assume the app works.
+The first cloud compilation and tests passed. If a later workflow fails, download `build-diagnostics` or copy the first compiler/test error and bring it back to this chat. Do not bypass failing image tests to assume the app works.
 
 ## 3. Install AltStore Classic from Windows
 
@@ -71,4 +73,4 @@ Save important outputs to Photos or Files. Deleting the app removes its private 
 
 This route avoids buying a Mac and avoids the paid Apple Developer membership for personal testing. The hosted build policy and AltStore restrictions are external services' policies, so follow their current documentation if they change.
 
-The next milestone is a successful cloud build followed by an installed app on your iPhone. The simulator can test image processing, but it cannot verify your camera's focus behavior, capture quality, memory limits, or how well a macro stack compares with Apple's Camera.
+The next milestone is installing the compiled app on your iPhone. The simulator tests passed, but they cannot verify your camera's focus behavior, capture quality, memory limits, or how well a macro stack compares with Apple's Camera.
