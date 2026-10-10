@@ -4,7 +4,7 @@ The free route uses **your Windows PC + GitHub's cloud Mac + your iPhone**. A re
 
 This assumes you can connect your iPhone to the Windows PC. If you literally only have access to the iPhone and cannot use a computer, this particular installation route is not available.
 
-The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.2 adds automatic focus, full-size output by default, improved alignment and a zoomable comparison. Its cloud validation is in progress; use only an IPA from a successful workflow run. Steps 1 and 2 are retained for rebuilding or making your own copy.
+The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.2 adds automatic focus, full-size output by default, improved alignment and a zoomable comparison. [All 14 tests and the iPhone Release build passed](https://github.com/cherifbmz/macrostack/actions/runs/38094135877). A local installer is available as `build/MacroStack-0.2.0-unsigned.ipa`. Steps 1 and 2 are retained for rebuilding or making your own copy.
 
 ## Updating your existing installation
 
