@@ -70,7 +70,7 @@ final class StackEngineTests: XCTestCase {
         XCTAssertEqual(correction.tx, -3, accuracy: 0.6)
         XCTAssertEqual(correction.ty, 2, accuracy: 0.6)
         let aligned = try engine.register(shifted)
-        XCTAssertLessThan(error(bytes(render(aligned.image)), bytes(render(reference)), width: 256, columns: 16..<240), 12)
+        XCTAssertLessThan(error(bytes(render(aligned.image, in: reference.extent)), bytes(render(reference)), width: 256, columns: 16..<240), 12)
         try engine.add(image: shifted)
         try engine.finishGroup()
         let result = try engine.outputImage()
@@ -137,7 +137,7 @@ final class StackEngineTests: XCTestCase {
         let registered = try engine.register(moving)
         let truth = bytes(render(reference))
         let initialError = error(bytes(render(moving)), truth, width: size, columns: 32..<224)
-        let correctedError = error(bytes(render(registered.image)), truth, width: size, columns: 32..<224)
+        let correctedError = error(bytes(render(registered.image, in: reference.extent)), truth, width: size, columns: 32..<224)
         XCTAssertEqual(engine.translationFallbacks, 0)
         XCTAssertLessThan(correctedError, initialError * 0.65)
     }
@@ -158,7 +158,7 @@ final class StackEngineTests: XCTestCase {
         var matrix = matrix_identity_float3x3
         matrix.columns.2 = SIMD3(-2, 1, 1)
         let aligned = try ImageAlignment.warp(shifted, matrix: matrix, registrationScale: 0.5)
-        XCTAssertLessThan(error(bytes(render(aligned.image)), bytes(render(reference)), width: 128, columns: 8..<120), 2)
+        XCTAssertLessThan(error(bytes(render(aligned.image, in: reference.extent)), bytes(render(reference)), width: 128, columns: 8..<120), 2)
         XCTAssertEqual(aligned.validRect.maxX, 124, accuracy: 0.01)
         XCTAssertEqual(aligned.validRect.minY, 2, accuracy: 0.01)
     }
@@ -211,8 +211,10 @@ final class StackEngineTests: XCTestCase {
                        colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
     }
 
-    private func render(_ image: CIImage) -> CGImage {
-        CIContext().createCGImage(image, from: image.extent, format: .RGBA8,
+    private func render(_ image: CIImage, in bounds: CGRect? = nil) -> CGImage {
+        // Registration changes image extent. Preserve the fixed reference canvas when
+        // comparing pixels, so both byte buffers have the same origin and row stride.
+        CIContext().createCGImage(image, from: bounds ?? image.extent, format: .RGBA8,
                                  colorSpace: CGColorSpace(name: CGColorSpace.sRGB))!
     }
 

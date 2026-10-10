@@ -4,7 +4,17 @@ The free route uses **your Windows PC + GitHub's cloud Mac + your iPhone**. A re
 
 This assumes you can connect your iPhone to the Windows PC. If you literally only have access to the iPhone and cannot use a computer, this particular installation route is not available.
 
-**Your first build is already complete.** The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack), and [this build passed all six tests and produced the iPhone IPA](https://github.com/cherifbmz/macrostack/actions/runs/37979553842). A downloaded copy is in this project's `build/MacroStack-unsigned.ipa`. **Start at step 3 below** to install AltStore, then import the IPA. Steps 1 and 2 are retained for rebuilding or making your own copy.
+The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.2 adds automatic focus, full-size output by default, improved alignment and a zoomable comparison. Its cloud validation is in progress; use only an IPA from a successful workflow run. Steps 1 and 2 are retained for rebuilding or making your own copy.
+
+## Updating your existing installation
+
+1. Save any important existing results to Photos or Files.
+2. Transfer the new `MacroStack-0.2.0-unsigned.ipa` to your iPhone's Files app.
+3. Keep AltServer running on the Windows PC and connect the phone using your existing working setup.
+4. In AltStore Classic, open **My Apps → +**, select the new IPA and use the same Apple ID as before. Keep the existing MacroStack app installed; the new build uses the same app identifier.
+5. Open MacroStack and try **Both → Automatic focus setup → Shallow**, with **Full resolution on**. Tap your subject, then capture with the two-second timer.
+
+This remains a free personal installation with the same periodic refresh requirement. Rebuilding the app does not remove that requirement.
 
 ## 1. Put the source in your GitHub account
 
@@ -39,7 +49,7 @@ The current source has already been uploaded to `cherifbmz/macrostack` with your
 
 The unsigned IPA cannot be installed just by tapping it. AltStore signs it for your Apple ID in the next step.
 
-The first cloud compilation and tests passed. If a later workflow fails, download `build-diagnostics` or copy the first compiler/test error and bring it back to this chat. Do not bypass failing image tests to assume the app works.
+If a workflow fails, download `build-diagnostics` or copy the first compiler/test error and bring it back to this chat. Do not bypass failing image tests to assume the app works.
 
 ## 3. Install AltStore Classic from Windows
 
@@ -61,7 +71,7 @@ Enter credentials only into the relevant Apple/AltStore authentication flow. No 
 2. Keep AltServer running on the PC, with the phone connected by USB or reachable using the supported Wi-Fi sync setup.
 3. On the iPhone, open AltStore Classic → **My Apps** → **+** and select the IPA.
 4. Wait for signing and installation, then open MacroStack and allow camera access.
-5. Follow **Getting started** in the app. Use Standard resolution for the first capture.
+5. Follow **Getting started** in the app. Leave Full resolution on for detail; Standard trades detail for lower memory use and faster processing.
 
 ## 5. Keep the free install working
 
@@ -73,4 +83,4 @@ Save important outputs to Photos or Files. Deleting the app removes its private 
 
 This route avoids buying a Mac and avoids the paid Apple Developer membership for personal testing. The hosted build policy and AltStore restrictions are external services' policies, so follow their current documentation if they change.
 
-The next milestone is installing the compiled app on your iPhone. The simulator tests passed, but they cannot verify your camera's focus behavior, capture quality, memory limits, or how well a macro stack compares with Apple's Camera.
+Version 0.1 was installed on your iPhone but produced disappointing detail. Version 0.2 targets those issues. Simulator tests cannot verify your camera's focus behavior, capture quality, memory limits, or how well a macro stack compares with Apple's Camera. Use the new Stack/Best single comparison at the same zoom, then compare with Apple's Camera on the same stationary subject and lighting.
