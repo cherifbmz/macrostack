@@ -196,6 +196,77 @@ final class StackEngineTests: XCTestCase {
         XCTAssertEqual(settings.maximumDimension, 4096)
     }
 
+    func testSubjectRegionChoosesSharpInsectOverSharpBackground() throws {
+        let truth = fixture(size: 128) { x, y in ((x / 3 + y / 3) % 2 == 0) ? 220 : 30 }
+        let blurred = truth.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 3]).cropped(to: truth.extent)
+        let subject = CGRect(x: 48, y: 48, width: 32, height: 32)
+        let sharpBackground = blurred.cropped(to: subject).composited(over: truth).cropped(to: truth.extent)
+        let sharpInsect = truth.cropped(to: subject).composited(over: blurred).cropped(to: truth.extent)
+        let engine = try StackEngine(maximumDimension: 128, subjectRegion: CGRect(x: 0.375, y: 0.375, width: 0.25, height: 0.25), bestFrameOnly: true)
+        try engine.add(image: sharpBackground)
+        try engine.add(image: sharpInsect)
+        XCTAssertEqual(engine.bestFrameIndex, 1)
+        XCTAssertLessThan(error(bytes(try engine.outputImage()), bytes(render(sharpInsect)), width: 128, columns: 8..<120), 2)
+    }
+
+    func testBurstNeverAlignsBlendsOrCropsMovingSubject() throws {
+        let first = fixture(size: 128) { x, y in UInt8(truncatingIfNeeded: x * 31 ^ y * 17) }
+        let second = first.clampedToExtent().transformed(by: CGAffineTransform(translationX: 40, y: 24)).cropped(to: first.extent)
+        let engine = try StackEngine(maximumDimension: 128, bestFrameOnly: true)
+        try engine.add(image: first)
+        try engine.add(image: second)
+        try engine.finishGroup()
+        let output = try engine.outputImage()
+        XCTAssertEqual(output.width, 128)
+        XCTAssertEqual(output.height, 128)
+        XCTAssertEqual(engine.frameCount, 2)
+        XCTAssertEqual(engine.rejectedFrames, 0)
+        XCTAssertEqual(engine.translationFallbacks, 0)
+        let chosen = engine.bestFrameIndex == 0 ? first : second
+        XCTAssertLessThan(error(bytes(output), bytes(render(chosen)), width: 128, columns: 8..<120), 2)
+    }
+
+    func testInsectPresetsAndSubjectRegionAtEdges() {
+        var settings = StackSettings()
+        settings.useStillInsectPreset()
+        XCTAssertEqual(settings.mode, .focus)
+        XCTAssertEqual(settings.totalFrames, 9)
+        XCTAssertEqual(settings.repeats, 1)
+        XCTAssertEqual(settings.focusSpan, 0.06)
+        settings.useMovingInsectPreset()
+        XCTAssertEqual(settings.mode, .burst)
+        XCTAssertEqual(settings.totalFrames, 5)
+        XCTAssertEqual(settings.positions.count, 1)
+        XCTAssertEqual(settings.timerSeconds, 0)
+        XCTAssertTrue(settings.keepOriginals)
+        for point in [0.0, 0.01, 0.5, 0.99, 1.0] {
+            settings.subjectX = point; settings.subjectY = 1 - point
+            XCTAssertTrue(CGRect(x: 0, y: 0, width: 1, height: 1).contains(settings.subjectRegion))
+            XCTAssertEqual(settings.subjectRegion.width, 0.24, accuracy: 0.0001)
+        }
+    }
+
+    func testShortShutterCompensatesISOAndReportsInsufficientLight() throws {
+        let plan = try ExposurePlan.make(meteredSeconds: 1.0 / 50, meteredISO: 100, denominator: 500,
+            minimumSeconds: 1.0 / 10000, maximumSeconds: 1, minimumISO: 25, maximumISO: 1600)
+        XCTAssertEqual(plan.seconds, 1.0 / 500, accuracy: 0.000001)
+        XCTAssertEqual(plan.iso, 1000, accuracy: 0.01)
+        XCTAssertFalse(plan.needsMoreLight)
+        let dark = try ExposurePlan.make(meteredSeconds: 1.0 / 30, meteredISO: 800, denominator: 1000,
+            minimumSeconds: 1.0 / 10000, maximumSeconds: 1, minimumISO: 25, maximumISO: 1600)
+        XCTAssertEqual(dark.iso, 1600)
+        XCTAssertTrue(dark.needsMoreLight)
+    }
+
+    func testShutterRespectsHardwareLimitsAndRejectsInvalidMetering() throws {
+        let plan = try ExposurePlan.make(meteredSeconds: 1.0 / 500, meteredISO: 25, denominator: 2000,
+            minimumSeconds: 1.0 / 1000, maximumSeconds: 1.0 / 30, minimumISO: 50, maximumISO: 1600)
+        XCTAssertEqual(plan.seconds, 1.0 / 1000, accuracy: 0.000001)
+        XCTAssertEqual(plan.iso, 50)
+        XCTAssertThrowsError(try ExposurePlan.make(meteredSeconds: .nan, meteredISO: 100, denominator: 500,
+            minimumSeconds: 1.0 / 1000, maximumSeconds: 1, minimumISO: 25, maximumISO: 1600))
+    }
+
     private func solid(_ value: UInt8) -> CIImage { fixture(size: 64) { _, _ in value } }
 
     private func alignmentDiagnostic(_ moving: CIImage, _ reference: CIImage) -> String {

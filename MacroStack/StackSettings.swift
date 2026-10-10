@@ -5,6 +5,7 @@ enum StackMode: String, CaseIterable, Identifiable, Codable {
     case focus = "Focus"
     case clean = "Noise"
     case single = "Single"
+    case burst = "Burst"
     var id: String { rawValue }
     var sweepsFocus: Bool { self == .both || self == .focus }
 }
@@ -23,6 +24,26 @@ struct StackSettings: Codable {
     var exposureBias: Float = 0
     var keepOriginals = true
     var showGrid = false
+    var burstCount = 5
+    var shutterDenominator = 500
+    var subjectX: Double = 0.5
+    var subjectY: Double = 0.5
+
+    /// Portrait image coordinates, origin at the bottom left (not camera device coordinates).
+    var subjectRegion: CGRect {
+        CGRect(x: max(0, min(0.76, subjectX - 0.12)),
+               y: max(0, min(0.76, subjectY - 0.12)), width: 0.24, height: 0.24)
+    }
+
+    mutating func useStillInsectPreset() {
+        mode = .focus; focusSteps = 9; focusSpan = 0.06
+        automaticFocus = true; fullResolution = true; timerSeconds = 2; keepOriginals = true
+    }
+
+    mutating func useMovingInsectPreset() {
+        mode = .burst; burstCount = 5; shutterDenominator = 500
+        automaticFocus = true; fullResolution = true; timerSeconds = 0; keepOriginals = true
+    }
 
     mutating func center(on position: Float) {
         focusCenter = min(1, max(0, position))
@@ -44,7 +65,7 @@ struct StackSettings: Codable {
         return values.sorted { abs($0 - center) == abs($1 - center) ? $0 < $1 : abs($0 - center) < abs($1 - center) }
     }
 
-    var repeats: Int { mode == .focus || mode == .single ? 1 : max(2, framesPerPosition) }
+    var repeats: Int { mode == .burst ? max(2, burstCount) : (mode == .focus || mode == .single ? 1 : max(2, framesPerPosition)) }
     var totalFrames: Int { positions.count * repeats }
     var maximumDimension: Int { fullResolution ? 4096 : 2048 }
 }

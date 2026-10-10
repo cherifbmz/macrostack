@@ -15,13 +15,21 @@ struct StackResult: Identifiable {
     let fallbacks: Int
     let directory: URL
     let originalsSaved: Bool
+    let mode: StackMode
+    let candidates: [URL]
+    let bestFrameIndex: Int
+    let captureNotes: String
 }
 
 @MainActor
 final class CameraModel: ObservableObject {
     let camera = CameraService()
     private let worker = StackWorker()
-    @Published var settings = StackSettings()
+    @Published var settings: StackSettings = {
+        var value = StackSettings()
+        value.useStillInsectPreset()
+        return value
+    }()
     @Published var isReady = false
     @Published var isBusy = false
     @Published var isAdjusting = false
@@ -71,9 +79,13 @@ final class CameraModel: ObservableObject {
         }
     }
 
-    func autofocus(at point: CGPoint? = nil) {
+    func autofocus(at point: CGPoint? = nil, imagePoint: CGPoint? = nil) {
         guard isReady, !isBusy, !isAdjusting else { return }
         if let point { focusPoint = point }
+        if let imagePoint {
+            settings.subjectX = imagePoint.x
+            settings.subjectY = imagePoint.y
+        }
         isAdjusting = true
         status = "Focusing on your subject…"
         Task {
@@ -99,6 +111,7 @@ final class CameraModel: ObservableObject {
     func capture() {
         guard isReady, !isBusy, !isAdjusting else { return }
         var settings = settings
+        if settings.mode == .burst { settings.keepOriginals = true }
         guard settings.automaticFocus || !settings.mode.sweepsFocus || abs(settings.near - settings.far) > 0.005 else {
             errorMessage = "Choose different focus endpoints, or use Noise mode for a fixed-focus burst."
             return
@@ -125,49 +138,73 @@ final class CameraModel: ObservableObject {
                 }
                 try Task.checkCancellation()
                 let archive = try CaptureArchive(settings: settings)
-                try await worker.begin(maximumDimension: settings.maximumDimension)
+                let exposureNotes: String
+                if settings.mode == .burst {
+                    if !settings.automaticFocus { try await camera.focus(at: settings.near) }
+                    exposureNotes = try await camera.prepareBurstExposure(denominator: settings.shutterDenominator,
+                                                                          continuousFocus: settings.automaticFocus)
+                } else {
+                    try await camera.lockExposure()
+                    exposureNotes = "Quality-prioritized still capture with metered exposure."
+                }
                 try Task.checkCancellation()
-                // Lock the metered preview exposure. Let the preview settle before pressing Capture.
-                try await camera.lockExposure()
+                var originals: [URL] = []
                 var captured = 0
+                let captureStarted = Date()
                 for (index, position) in settings.positions.enumerated() {
                     try Task.checkCancellation()
-                    status = "Setting focus \(index + 1) of \(settings.positions.count)…"
-                    try await camera.focus(at: position)
+                    if settings.mode != .burst {
+                        status = "Setting focus \(index + 1) of \(settings.positions.count)…"
+                        try await camera.focus(at: position)
+                    }
                     for repeatIndex in 0..<settings.repeats {
                         try Task.checkCancellation()
-                        status = "Focus \(index + 1)/\(settings.positions.count) · photo \(repeatIndex + 1)/\(settings.repeats)"
-                        let data = try await camera.photo()
+                        status = settings.mode == .burst
+                            ? "Burst photo \(repeatIndex + 1)/\(settings.repeats) · \(exposureNotes)"
+                            : "Focus \(index + 1)/\(settings.positions.count) · photo \(repeatIndex + 1)/\(settings.repeats)"
+                        let data = try await camera.photo(prioritizeSpeed: settings.mode == .burst)
                         try Task.checkCancellation()
-                        if settings.keepOriginals {
-                            let number = captured + 1
-                            try await Task.detached(priority: .utility) {
-                                try archive.saveOriginal(data, index: number, focus: position)
-                            }.value
-                        }
-                        status = "Aligning photo \(captured + 1) of \(settings.totalFrames)…"
-                        _ = try await worker.add(data: data)
+                        let number = captured + 1
+                        let lens: Float? = settings.mode == .burst && settings.automaticFocus ? nil : position
+                        let file = try await Task.detached(priority: .utility) {
+                            try archive.saveOriginal(data, index: number, focus: lens)
+                        }.value
+                        originals.append(file)
                         captured += 1
-                        progress = Double(captured) / Double(settings.totalFrames)
+                        progress = 0.6 * Double(captured) / Double(settings.totalFrames)
                     }
-                    status = "Combining focus position \(index + 1)…"
-                    try await worker.finishGroup()
+                }
+                let captureNotes = String(format: "Captured %d photos in %.1f seconds. ", captured, Date().timeIntervalSince(captureStarted)) + exposureNotes
+                await camera.restoreAutomaticExposure()
+                // Disk-backed capture keeps memory bounded and removes rendering pauses between photos.
+                try await worker.begin(maximumDimension: settings.maximumDimension,
+                                       subjectRegion: settings.subjectRegion, bestFrameOnly: settings.mode == .burst)
+                for (index, file) in originals.enumerated() {
+                    try Task.checkCancellation()
+                    status = settings.mode == .burst ? "Checking insect detail in photo \(index + 1)/\(captured)…" : "Processing photo \(index + 1)/\(captured)…"
+                    _ = try await worker.add(file: file)
+                    if (index + 1) % settings.repeats == 0 { try await worker.finishGroup() }
+                    progress = 0.6 + 0.4 * Double(index + 1) / Double(captured)
                 }
                 try Task.checkCancellation()
                 status = "Rendering your photo…"
-                let (image, reference, rejected, fallbacks) = try await worker.finish()
+                let (image, reference, rejected, fallbacks, bestFrameIndex) = try await worker.finish()
                 try Task.checkCancellation()
                 // Encode large JPEGs off the UI thread, without sending photos to a server.
                 let count = captured
+                let temporaryFrames = settings.keepOriginals ? [] : originals
                 try await Task.detached(priority: .userInitiated) {
-                    try archive.complete(image: image, reference: reference, frames: count, rejected: rejected, fallbacks: fallbacks)
+                    try archive.complete(image: image, reference: reference, frames: count, rejected: rejected, fallbacks: fallbacks, notes: captureNotes)
+                    try archive.discardTemporaryFrames(temporaryFrames)
                 }.value
                 try Task.checkCancellation()
                 result = StackResult(image: UIImage(cgImage: image), reference: UIImage(cgImage: reference),
                                      url: archive.outputURL, referenceURL: archive.referenceURL, frames: captured,
                                      positions: settings.positions.count, rejected: rejected, fallbacks: fallbacks,
-                                     directory: archive.directory, originalsSaved: settings.keepOriginals)
-                status = "Photo ready. Pinch to inspect the stack and best single photo."
+                                     directory: archive.directory, originalsSaved: settings.keepOriginals, mode: settings.mode,
+                                     candidates: settings.mode == .burst ? originals : [], bestFrameIndex: bestFrameIndex,
+                                     captureNotes: captureNotes)
+                status = settings.mode == .burst ? "Burst ready. Review individual photos and choose the sharpest insect." : "Photo ready. Pinch to inspect the stack and best single photo."
             } catch is CancellationError {
                 status = "Capture cancelled."
                 await worker.discard()

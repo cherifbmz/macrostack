@@ -5,6 +5,7 @@ struct ContentView: View {
     @StateObject private var model = CameraModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var showHelp = false
+    @State private var previewMagnified = false
     private let accent = Color(red: 0.66, green: 0.91, blue: 0.48)
 
     var body: some View {
@@ -12,10 +13,16 @@ struct ContentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     ZStack(alignment: .bottomLeading) {
-                        CameraPreview(session: model.camera.session, onFocus: { model.autofocus(at: $0) })
+                        CameraPreview(session: model.camera.session, onFocus: { model.autofocus(at: $0, imagePoint: $1) })
                             .aspectRatio(3.0 / 4.0, contentMode: .fit)
                             .background(.black)
                             .overlay {
+                                GeometryReader { geometry in
+                                    let region = model.settings.subjectRegion
+                                    Rectangle().stroke(.yellow.opacity(0.8), lineWidth: 1)
+                                        .frame(width: geometry.size.width * region.width, height: geometry.size.height * region.height)
+                                        .position(x: geometry.size.width * region.midX, y: geometry.size.height * (1 - region.midY))
+                                }.allowsHitTesting(false)
                                 if model.settings.showGrid {
                                     GeometryReader { geometry in
                                         Path { path in
@@ -29,12 +36,17 @@ struct ContentView: View {
                                     }.allowsHitTesting(false)
                                 }
                             }
+                            .scaleEffect(previewMagnified ? 2 : 1)
                         Text("ULTRA WIDE · MACRO")
                             .font(.caption2.monospaced().weight(.semibold))
                             .padding(10).background(.black.opacity(0.6), in: Capsule()).padding(12)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 22))
                     .overlay(RoundedRectangle(cornerRadius: 22).stroke(.white.opacity(0.12)))
+
+                    Toggle("Magnify preview 2×", isOn: $previewMagnified).font(.caption)
+                    Text("Tap the insect's eye. The yellow box marks the area used to judge sharpness. Preview magnification helps check focus; saved photos keep the full view.")
+                        .font(.caption).foregroundStyle(.secondary)
 
                     Text(model.status).font(.subheadline).foregroundStyle(.secondary)
                         .accessibilityIdentifier("captureStatus")
@@ -43,7 +55,6 @@ struct ContentView: View {
                         Button("Cancel capture", role: .cancel) { model.cancel() }
                             .buttonStyle(.bordered).frame(maxWidth: .infinity)
                     } else {
-                        controls
                         Button { model.capture() } label: {
                             Label(model.settings.mode == .single ? "Take photo" : "Capture \(model.settings.totalFrames) photos", systemImage: "camera.aperture")
                                 .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
@@ -53,8 +64,9 @@ struct ContentView: View {
                         if !model.isReady {
                             Button("Retry camera") { Task { await model.start() } }
                         }
+                        controls
                     }
-                    Text("For stacks, support the phone and keep your subject still. Use Single for moving subjects. Full-size stacks take longer.")
+                    Text("Still insect needs a supported phone and a motionless subject. Moving insect uses individual burst photos; keep the insect inside the yellow box. It does not track an insect across the frame.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 .padding()
@@ -68,7 +80,10 @@ struct ContentView: View {
                 else if phase == .background { model.suspend() }
             }
             .sheet(isPresented: $showHelp) { help }
-            .sheet(item: $model.result) { ResultView(result: $0) }
+            .sheet(item: $model.result) { result in
+                if result.mode == .burst { BurstResultView(result: result) }
+                else { ResultView(result: result) }
+            }
             .alert("MacroStack", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
                 Button("OK") { model.errorMessage = nil }
             } message: { Text(model.errorMessage ?? "") }
@@ -77,15 +92,29 @@ struct ContentView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Button("Still insect") { model.settings.useStillInsectPreset() }
+                Button("Moving insect") { model.settings.useMovingInsectPreset() }
+            }.buttonStyle(.bordered)
             Picker("Stacking", selection: $model.settings.mode) {
                 ForEach(StackMode.allCases) { Text($0.rawValue).tag($0) }
             }.pickerStyle(.segmented)
+            if model.settings.mode == .burst {
+                Stepper("Burst photos: \(model.settings.burstCount)", value: $model.settings.burstCount, in: 3...8)
+                Picker("Shutter speed", selection: $model.settings.shutterDenominator) {
+                    Text("1/250 s").tag(250); Text("1/500 s").tag(500); Text("1/1000 s").tag(1000)
+                }.pickerStyle(.segmented)
+                Text("Shorter exposures reduce motion blur but need more light and can increase noise. Burst favors capture speed, keeps every original, and never blends frames. It is a sequence of still photos, not high-speed video.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Toggle("Automatic focus setup", isOn: $model.settings.automaticFocus)
             if model.settings.automaticFocus {
                 Button { model.autofocus() } label: {
                     Label(model.isAdjusting ? "Focusing…" : "Focus on subject", systemImage: "scope")
                 }.buttonStyle(.bordered).disabled(!model.isReady || model.isAdjusting)
-                Text("Tap your subject in the preview. Focus is checked again before capture.")
+                Text(model.settings.mode == .burst
+                     ? "Tap the insect and keep it in that area. Focus is checked before capture, then continuous autofocus adjusts during the burst."
+                     : "Tap your subject in the preview. Focus is checked again before capture.")
                     .font(.caption).foregroundStyle(.secondary)
                 if model.settings.mode.sweepsFocus {
                     Picker("Focus depth", selection: $model.settings.focusSpan) {
@@ -122,7 +151,10 @@ struct ContentView: View {
                  ? "Uses the captured photo size up to 4096 px on the long edge. More processing time and memory."
                  : "Standard: 2048 px on the long edge. Faster, but discards fine detail.")
                 .font(.caption).foregroundStyle(.secondary)
-            Toggle("Save original camera photos", isOn: $model.settings.keepOriginals)
+            Toggle("Save original camera photos", isOn: Binding(get: {
+                model.settings.mode == .burst || model.settings.keepOriginals
+            }, set: { model.settings.keepOriginals = $0 }))
+                .disabled(model.settings.mode == .burst)
             Text("Originals are kept in Files → On My iPhone → MacroStack → Stacks. A stack can use tens of megabytes.")
                 .font(.caption).foregroundStyle(.secondary)
             Toggle("Composition grid", isOn: $model.settings.showGrid)
@@ -153,13 +185,14 @@ struct ContentView: View {
                     Text("1. Choose a still subject, such as a coin or a leaf indoors. Support the phone and add soft, steady light.")
                     Text("2. Start a few centimetres away. The Ultra Wide camera stays selected for the entire capture.")
                     Text("3. Leave Automatic focus setup on and tap your subject. Start with Shallow depth for fine details. Autofocus is repeated after the timer, and the sweep starts at that focus position.")
-                    Text("4. Start with Both, 7 focus positions and 2 photos per position. Full resolution retains the camera's detail. Use the 2-second timer to reduce shutter-tap shake.")
+                    Text("4. Choose Still insect: 9 narrow focus positions, one photo per position, Full resolution and a two-second timer. Photos are captured first, then processed. Try Both only if noise is the main issue and everything remains motionless.")
                     Text("5. Pinch or double tap the result to inspect detail. Switch between Stack and Best single without losing your zoom. Save whichever looks better.")
                 }
                 Section("Modes") {
                     Text("Both averages repeated photos at each focus position, then combines the sharper regions.")
                     Text("Focus captures one photo per position. Noise averages several photos at the single focus position you choose.")
                     Text("Single takes one photo without stacking. Use it for moving subjects or to compare capture quality.")
+                    Text("Moving insect selects Burst with 5 photos and a 1/500-second shutter. Continuous autofocus adjusts around the tapped area. Add steady light, keep the insect inside the yellow box, and review each original. Shorter shutter speeds cannot guarantee sharp wings or fast flight.")
                 }
                 Section("Prototype limits") {
                     Text("Perspective alignment corrects small shifts, rotations and focus breathing when enough shared detail is visible. Strong perspective changes, moving subjects and overlapping surfaces can still cause artifacts. Narrow the focus sweep if alignment fails.")
@@ -195,8 +228,9 @@ private struct ResultView: View {
                     Text("Pinch to zoom · double tap for detail").font(.caption).foregroundStyle(.secondary)
                     Text("\(result.frames) photos · \(result.positions) focus positions · \(Int(result.image.size.width)) × \(Int(result.image.size.height)) px")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("Best single is chosen by an overall detail score. Both views use the same aligned crop; compare at the same zoom and save the one you prefer.")
+                    Text("Best single is chosen by detail in the yellow subject box. Both views use the same aligned crop; compare at the same zoom and save the one you prefer.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Text(result.captureNotes).font(.caption).foregroundStyle(.secondary)
                     if result.rejected > 0 { Text("\(result.rejected) softer photos excluded from averaging.").font(.caption) }
                     if result.fallbacks > 0 { Text("\(result.fallbacks) photos used simpler alignment. Check edges carefully.").font(.caption).foregroundStyle(.orange) }
                     Button(savedSelections.contains(showReference) ? "Saved to Photos" : (saving ? "Saving…" : (showReference ? "Save best single to Photos" : "Save stack to Photos"))) { save() }

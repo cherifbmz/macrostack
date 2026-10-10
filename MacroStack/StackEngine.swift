@@ -14,6 +14,8 @@ final class StackEngine {
     private let averagingKernel: CIColorKernel
     private let blendKernel: CIColorKernel
     private let protectMotion: Bool
+    private let subjectRegion: CGRect?
+    private let bestFrameOnly: Bool
     private let linearSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
     private var reference: CIImage?
     private var registrationReference: CIImage?
@@ -30,11 +32,15 @@ final class StackEngine {
     private(set) var groupTotal = 0
     private(set) var rejectedFrames = 0
     private(set) var translationFallbacks = 0
+    private(set) var bestFrameIndex = 0
 
-    init(maximumDimension: Int, registerImages: Bool = true, protectMotion: Bool = true) throws {
+    init(maximumDimension: Int, registerImages: Bool = true, protectMotion: Bool = true,
+         subjectRegion: CGRect? = nil, bestFrameOnly: Bool = false) throws {
         self.maximumDimension = maximumDimension
-        self.registerImages = registerImages
+        self.registerImages = registerImages && !bestFrameOnly
         self.protectMotion = protectMotion
+        self.subjectRegion = subjectRegion
+        self.bestFrameOnly = bestFrameOnly
         context = CIContext(options: [
             .cacheIntermediates: false,
             .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!,
@@ -104,6 +110,15 @@ final class StackEngine {
         input = input.cropped(to: reference.extent)
         let detail = detailMetric(input)
         frameCount += 1
+        if bestFrameOnly {
+            if detail > bestImageDetail {
+                bestImageDetail = detail
+                bestImage = input
+                bestFrameIndex = frameCount - 1
+                fused = input
+            }
+            return true
+        }
         if groupCount > 0 && groupDetail > 0.002 && detail < groupDetail * 0.65 {
             rejectedFrames += 1
             return false
@@ -111,6 +126,7 @@ final class StackEngine {
         if detail > bestImageDetail {
             bestImageDetail = detail
             bestImage = try rendered(input, in: reference.extent)
+            bestFrameIndex = frameCount - 1
         }
         // A later, substantially sharper frame replaces a blurred group anchor.
         if groupCount > 0 && detail > max(0.002, groupDetail * 1.5) {
@@ -130,6 +146,7 @@ final class StackEngine {
     }
 
     func finishGroup() throws {
+        if bestFrameOnly { return }
         guard let mean, let reference else { throw MacroError.message("No photos at this focus position.") }
         let extent = reference.extent
         let score = try rendered(sharpness(mean), in: extent)
@@ -205,8 +222,17 @@ final class StackEngine {
     }
 
     private func detailMetric(_ image: CIImage) -> Float {
-        let scale = min(1, 512 / max(image.extent.width, image.extent.height))
-        let small = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        // Crop before downsampling so a tiny insect's detail isn't lost to the background.
+        let canvas = reference?.extent ?? image.extent
+        let normalized = subjectRegion ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let region = CGRect(x: canvas.minX + normalized.minX * canvas.width,
+                            y: canvas.minY + normalized.minY * canvas.height,
+                            width: normalized.width * canvas.width, height: normalized.height * canvas.height)
+            .intersection(image.extent).intersection(commonRect)
+        guard !region.isEmpty, !region.isNull else { return 0 }
+        let patch = image.cropped(to: region)
+        let scale = min(1, 512 / max(region.width, region.height))
+        let small = patch.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         let edges = sharpness(small)
         let average = edges.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: small.extent)])
         var pixel = [Float](repeating: 0, count: 4)
@@ -260,23 +286,30 @@ final class StackWorker {
     private let queue = DispatchQueue(label: "macrostack.processing", qos: .userInitiated)
     private var engine: StackEngine?
 
-    func begin(maximumDimension: Int) async throws {
-        try await run { self.engine = try StackEngine(maximumDimension: maximumDimension) }
+    func begin(maximumDimension: Int, subjectRegion: CGRect? = nil, bestFrameOnly: Bool = false) async throws {
+        try await run { self.engine = try StackEngine(maximumDimension: maximumDimension, subjectRegion: subjectRegion, bestFrameOnly: bestFrameOnly) }
     }
 
     func add(data: Data) async throws -> Bool {
         try await run { guard let engine = self.engine else { throw MacroError.message("No active stack.") }; return try engine.add(data: data) }
     }
 
+    func add(file: URL) async throws -> Bool {
+        try await run {
+            guard let engine = self.engine else { throw MacroError.message("No active capture.") }
+            return try engine.add(data: Data(contentsOf: file, options: .mappedIfSafe))
+        }
+    }
+
     func finishGroup() async throws {
         try await run { guard let engine = self.engine else { throw MacroError.message("No active stack.") }; try engine.finishGroup() }
     }
 
-    func finish() async throws -> (CGImage, CGImage, Int, Int) {
+    func finish() async throws -> (CGImage, CGImage, Int, Int, Int) {
         try await run {
             guard let engine = self.engine else { throw MacroError.message("No active stack.") }
             defer { self.engine = nil }
-            return (try engine.outputImage(), try engine.referenceImage(), engine.rejectedFrames, engine.translationFallbacks)
+            return (try engine.outputImage(), try engine.referenceImage(), engine.rejectedFrames, engine.translationFallbacks, engine.bestFrameIndex)
         }
     }
 

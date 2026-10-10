@@ -20,15 +20,18 @@ final class CaptureArchive: @unchecked Sendable {
             .write(to: directory.appendingPathComponent("status.txt"), options: .atomic)
     }
 
-    func saveOriginal(_ data: Data, index: Int, focus: Float) throws {
+    @discardableResult func saveOriginal(_ data: Data, index: Int, focus: Float?) throws -> URL {
         let source = CGImageSourceCreateWithData(data as CFData, nil)
         let type = source.flatMap { CGImageSourceGetType($0) } as String?
         let ext = type.flatMap { UTType($0)?.preferredFilenameExtension } ?? "image"
-        let name = String(format: "frame-%03d-focus-%.4f.%@", index, focus, ext)
-        try data.write(to: directory.appendingPathComponent(name), options: .atomic)
+        let name = focus.map { String(format: "frame-%03d-focus-%.4f.%@", index, $0, ext) }
+            ?? String(format: "frame-%03d.%@", index, ext)
+        let url = directory.appendingPathComponent(name)
+        try data.write(to: url, options: .atomic)
+        return url
     }
 
-    func complete(image: CGImage, reference: CGImage, frames: Int, rejected: Int, fallbacks: Int) throws {
+    func complete(image: CGImage, reference: CGImage, frames: Int, rejected: Int, fallbacks: Int, notes: String = "") throws {
         for (cgImage, url) in [(image, outputURL), (reference, referenceURL)] {
             guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
                 throw MacroError.message("Could not create the output file.")
@@ -36,7 +39,16 @@ final class CaptureArchive: @unchecked Sendable {
             CGImageDestinationAddImage(destination, cgImage, [kCGImageDestinationLossyCompressionQuality: 0.98] as CFDictionary)
             guard CGImageDestinationFinalize(destination) else { throw MacroError.message("Could not save the image. Check available storage.") }
         }
-        let summary = "Completed: \(frames) photos; \(rejected) excluded from averaging for softness; \(fallbacks) translation-only alignments.\nBest-single is selected by an overall edge-detail score and aligned/cropped to match the stack.\n"
+        let summary = "Completed: \(frames) photos; \(rejected) excluded from averaging for softness; \(fallbacks) translation-only alignments.\nBest-single uses detail in the selected subject area. Stacked comparisons use the same aligned crop. Burst photos are never aligned or blended.\n\(notes)\n"
         try Data(summary.utf8).write(to: directory.appendingPathComponent("status.txt"), options: .atomic)
+    }
+
+    /// Only remove this capture's temporary frame files after successful export.
+    func discardTemporaryFrames(_ urls: [URL]) throws {
+        for url in urls {
+            guard url.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL,
+                  url.lastPathComponent.hasPrefix("frame-") else { continue }
+            try FileManager.default.removeItem(at: url)
+        }
     }
 }

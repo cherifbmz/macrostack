@@ -15,6 +15,8 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
     private var focusContinuation: CheckedContinuation<Void, Error>?
     private var autofocusID: UUID?
     private var autofocusContinuation: CheckedContinuation<Float, Error>?
+    private var exposureID: UUID?
+    private var exposureContinuation: CheckedContinuation<String, Error>?
 
     func start() async throws {
         let allowed = await AVCaptureDevice.requestAccess(for: .video)
@@ -188,7 +190,49 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
         }
     }
 
-    func photo() async throws -> Data {
+    func prepareBurstExposure(denominator: Int, continuousFocus: Bool) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                guard let device = self.device, self.session.isRunning,
+                      device.isExposureModeSupported(.custom), self.exposureContinuation == nil else {
+                    continuation.resume(throwing: MacroError.message("Manual shutter is unavailable. Try Single mode."))
+                    return
+                }
+                do {
+                    let format = device.activeFormat
+                    let plan = try ExposurePlan.make(meteredSeconds: CMTimeGetSeconds(device.exposureDuration),
+                        meteredISO: device.iso, denominator: denominator,
+                        minimumSeconds: CMTimeGetSeconds(format.minExposureDuration), maximumSeconds: CMTimeGetSeconds(format.maxExposureDuration),
+                        minimumISO: format.minISO, maximumISO: format.maxISO)
+                    try device.lockForConfiguration()
+                    defer { device.unlockForConfiguration() }
+                    if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
+                    if continuousFocus && device.isFocusModeSupported(.continuousAutoFocus) {
+                        device.focusMode = .continuousAutoFocus
+                    }
+                    let id = UUID()
+                    self.exposureID = id
+                    self.exposureContinuation = continuation
+                    device.setExposureModeCustom(duration: CMTime(seconds: plan.seconds, preferredTimescale: 1_000_000_000), iso: plan.iso) { _ in
+                        self.queue.async {
+                            self.finishBurstExposure(id: id, result: .success(plan.summary))
+                        }
+                    }
+                    self.queue.asyncAfter(deadline: .now() + 5) {
+                        self.finishBurstExposure(id: id, result: .failure(MacroError.message("Shutter adjustment timed out. Retry capture.")))
+                    }
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    private func finishBurstExposure(id: UUID, result: Result<String, Error>) {
+        guard exposureID == id, let continuation = exposureContinuation else { return }
+        exposureID = nil; exposureContinuation = nil
+        continuation.resume(with: result)
+    }
+
+    func photo(prioritizeSpeed: Bool = false) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 guard self.session.isRunning, self.photoContinuation == nil else {
@@ -198,7 +242,8 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
                 let codec: AVVideoCodecType = self.output.availablePhotoCodecTypes.contains(.hevc) ? .hevc : .jpeg
                 let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec])
                 settings.maxPhotoDimensions = self.output.maxPhotoDimensions
-                settings.photoQualityPrioritization = .quality
+                // Speed prioritization keeps the explicit burst shutter/ISO settings.
+                settings.photoQualityPrioritization = prioritizeSpeed ? .speed : .quality
                 settings.flashMode = .off
                 if let connection = self.output.connection(with: .video), connection.isVideoOrientationSupported {
                     connection.videoOrientation = .portrait
@@ -243,6 +288,7 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
     func stop() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             queue.async {
+                if let id = self.exposureID { self.finishBurstExposure(id: id, result: .failure(CancellationError())) }
                 if let pending = self.autofocusContinuation {
                     self.autofocusContinuation = nil; self.autofocusID = nil
                     pending.resume(throwing: CancellationError())

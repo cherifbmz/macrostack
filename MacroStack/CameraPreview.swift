@@ -3,12 +3,12 @@ import SwiftUI
 
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
-    var onFocus: (CGPoint) -> Void
+    var onFocus: (CGPoint, CGPoint) -> Void
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
         var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
-        var onFocus: ((CGPoint) -> Void)?
+        var onFocus: ((CGPoint, CGPoint) -> Void)?
         private let focusRing = UIView()
 
         override init(frame: CGRect) {
@@ -30,7 +30,9 @@ struct CameraPreview: UIViewRepresentable {
             focusRing.frame = CGRect(x: location.x - 28, y: location.y - 28, width: 56, height: 56)
             focusRing.alpha = 1; focusRing.isHidden = false
             UIView.animate(withDuration: 0.4, delay: 1.2, options: [], animations: { self.focusRing.alpha = 0 }, completion: nil)
-            onFocus?(previewLayer.captureDevicePointConverted(fromLayerPoint: location))
+            let imagePoint = CGPoint(x: (location.x - videoRect.minX) / videoRect.width,
+                                     y: 1 - (location.y - videoRect.minY) / videoRect.height)
+            onFocus?(previewLayer.captureDevicePointConverted(fromLayerPoint: location), imagePoint)
         }
     }
 
