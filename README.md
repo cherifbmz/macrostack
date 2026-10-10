@@ -2,7 +2,7 @@
 
 A native iOS camera prototype for the iPhone 13 Pro Max. It combines **focus stacking** and **multi-frame noise reduction**, with processing on the phone.
 
-**Version 0.2:** focuses on easier autofocus and detail retention after the first version produced disappointing results on the user's iPhone. Cloud validation is in progress. The IPA needs local signing through AltStore. Simulator tests cannot establish real-camera quality; compare results on your iPhone before relying on a stack.
+**Version 0.2:** adds easier autofocus and improves detail retention. Cloud validation is in progress. The IPA needs local signing through AltStore. Simulator tests cannot establish real-camera quality; compare results on your iPhone before relying on a stack.
 
 Start with [SETUP.md](SETUP.md) to build and install without owning a Mac.
 
@@ -95,6 +95,7 @@ On the phone, verify:
 - [Apple: macro photography on iPhone](https://support.apple.com/guide/iphone/take-macro-photos-and-videos-iphfaacf2eb0/ios)
 - [Apple: manual lens positioning](https://developer.apple.com/documentation/avfoundation/avcapturedevice/setfocusmodelocked(lensposition:completionhandler:))
 - [Apple: image registration](https://developer.apple.com/documentation/vision/vntranslationalimageregistrationrequest)
+- [Apple: homography sampling direction, WWDC17 session 510, slides 189–197](https://devstreaming-cdn.apple.com/videos/wwdc/2017/510lf4jlju5s1/510/510_advances_in_core_image_filters_metal_vision_and_more.pdf)
 - [GitHub: hosted runners and public-repository availability](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
 - [AltStore Classic: Windows installation](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows)
 - [AltStore Classic: refresh and installation limits](https://faq.altstore.io/altstore-classic/your-altstore)

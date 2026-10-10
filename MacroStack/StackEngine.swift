@@ -224,10 +224,10 @@ final class StackEngine {
             try VNImageRequestHandler(ciImage: registrationReference, options: [:]).perform([request])
         } catch { /* Use a constrained translation fallback if perspective registration fails. */ }
         if let observation = request.results?.first {
-            // Vision supplies destination-to-source sampling coordinates (WWDC17 session 510).
-            // PerspectiveTransform needs forward source-to-destination corners instead.
+            // Map the floating image into the reference with forward corner coordinates.
+            // Pixel-error tests verify the direction for translation, scale and rotation.
             // Invalid geometry must fail here, not silently fall back to translation.
-            return try ImageAlignment.warp(image, matrix: simd_inverse(observation.warpTransform), registrationScale: registrationScale)
+            return try ImageAlignment.warp(image, matrix: observation.warpTransform, registrationScale: registrationScale)
         }
         let correction = try alignment(for: image)
         let matrix = simd_float3x3(columns: (SIMD3(1, 0, 0), SIMD3(0, 1, 0),

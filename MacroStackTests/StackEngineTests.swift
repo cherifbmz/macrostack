@@ -1,6 +1,7 @@
 import XCTest
 import CoreImage
 import simd
+import Vision
 @testable import MacroStack
 
 final class StackEngineTests: XCTestCase {
@@ -70,7 +71,7 @@ final class StackEngineTests: XCTestCase {
         XCTAssertEqual(correction.tx, -3, accuracy: 0.6)
         XCTAssertEqual(correction.ty, 2, accuracy: 0.6)
         let aligned = try engine.register(shifted)
-        XCTAssertLessThan(error(bytes(render(aligned.image, in: reference.extent)), bytes(render(reference)), width: 256, columns: 16..<240), 12)
+        XCTAssertLessThan(error(bytes(render(aligned.image, in: reference.extent)), bytes(render(reference)), width: 256, columns: 16..<240), 12, alignmentDiagnostic(shifted, reference))
         try engine.add(image: shifted)
         try engine.finishGroup()
         let result = try engine.outputImage()
@@ -139,7 +140,7 @@ final class StackEngineTests: XCTestCase {
         let initialError = error(bytes(render(moving)), truth, width: size, columns: 32..<224)
         let correctedError = error(bytes(render(registered.image, in: reference.extent)), truth, width: size, columns: 32..<224)
         XCTAssertEqual(engine.translationFallbacks, 0)
-        XCTAssertLessThan(correctedError, initialError * 0.65)
+        XCTAssertLessThan(correctedError, initialError * 0.65, alignmentDiagnostic(moving, reference))
     }
 
     func testInvalidWarpIsRejected() throws {
@@ -196,6 +197,23 @@ final class StackEngineTests: XCTestCase {
     }
 
     private func solid(_ value: UInt8) -> CIImage { fixture(size: 64) { _, _ in value } }
+
+    private func alignmentDiagnostic(_ moving: CIImage, _ reference: CIImage) -> String {
+        let request = VNHomographicImageRegistrationRequest(targetedCIImage: moving, options: [:])
+        do {
+            try VNImageRequestHandler(ciImage: reference, options: [:]).perform([request])
+            guard let matrix = request.results?.first?.warpTransform else { return "No homography" }
+            let flip = simd_float3x3(columns: (SIMD3(1, 0, 0), SIMD3(0, -1, 0), SIMD3(0, Float(reference.extent.height), 1)))
+            var details = "Vision matrix: \(matrix)"
+            for (name, candidate) in [("forward", matrix), ("inverse", simd_inverse(matrix)), ("flip", flip * matrix * flip), ("inverseFlip", flip * simd_inverse(matrix) * flip)] {
+                if let aligned = try? ImageAlignment.warp(moving, matrix: candidate, registrationScale: 1) {
+                    let difference = error(bytes(render(aligned.image, in: reference.extent)), bytes(render(reference)), width: Int(reference.extent.width), columns: 32..<224)
+                    details += " \(name): \(difference)"
+                }
+            }
+            return details
+        } catch { return "Diagnostic failed: \(error)" }
+    }
 
     private func fixture(size: Int, pixel: (Int, Int) -> UInt8) -> CIImage {
         var data = [UInt8](repeating: 255, count: size * size * 4)
