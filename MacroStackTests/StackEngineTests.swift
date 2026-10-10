@@ -69,6 +69,8 @@ final class StackEngineTests: XCTestCase {
         let correction = try engine.alignment(for: shifted)
         XCTAssertEqual(correction.tx, -3, accuracy: 0.6)
         XCTAssertEqual(correction.ty, 2, accuracy: 0.6)
+        let aligned = try engine.register(shifted)
+        XCTAssertLessThan(error(bytes(render(aligned.image)), bytes(render(reference)), width: 256, columns: 16..<240), 12)
         try engine.add(image: shifted)
         try engine.finishGroup()
         let result = try engine.outputImage()
@@ -147,6 +149,18 @@ final class StackEngineTests: XCTestCase {
         XCTAssertThrowsError(try ImageAlignment.warp(image, matrix: matrix, registrationScale: 1))
         matrix.columns.2.x = .nan
         XCTAssertThrowsError(try ImageAlignment.warp(image, matrix: matrix, registrationScale: 1))
+    }
+
+    func testRegistrationScaleConvertsThumbnailPixelsToFullSize() throws {
+        let reference = fixture(size: 128) { x, y in UInt8(truncatingIfNeeded: x * 31 ^ y * 17) }
+        let shifted = reference.clampedToExtent()
+            .transformed(by: CGAffineTransform(translationX: 4, y: -2)).cropped(to: reference.extent)
+        var matrix = matrix_identity_float3x3
+        matrix.columns.2 = SIMD3(-2, 1, 1)
+        let aligned = try ImageAlignment.warp(shifted, matrix: matrix, registrationScale: 0.5)
+        XCTAssertLessThan(error(bytes(render(aligned.image)), bytes(render(reference)), width: 128, columns: 8..<120), 2)
+        XCTAssertEqual(aligned.validRect.maxX, 124, accuracy: 0.01)
+        XCTAssertEqual(aligned.validRect.minY, 2, accuracy: 0.01)
     }
 
     func testComparisonUsesIdenticalCrop() throws {

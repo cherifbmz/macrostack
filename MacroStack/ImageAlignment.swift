@@ -7,7 +7,7 @@ struct RegisteredFrame {
 }
 
 enum ImageAlignment {
-    /// Vision's warp maps floating-image pixels into reference-image pixels.
+    /// Apply a forward source-to-reference matrix in registration-image pixel coordinates.
     static func warp(_ image: CIImage, matrix: simd_float3x3, registrationScale: CGFloat) throws -> RegisteredFrame {
         let rect = image.extent
         func project(_ x: CGFloat, _ y: CGFloat) throws -> CGPoint {

@@ -222,10 +222,13 @@ final class StackEngine {
         let request = VNHomographicImageRegistrationRequest(targetedCIImage: try registrationImage(image), options: [:])
         do {
             try VNImageRequestHandler(ciImage: registrationReference, options: [:]).perform([request])
-            if let observation = request.results?.first {
-                return try ImageAlignment.warp(image, matrix: observation.warpTransform, registrationScale: registrationScale)
-            }
         } catch { /* Use a constrained translation fallback if perspective registration fails. */ }
+        if let observation = request.results?.first {
+            // Vision supplies destination-to-source sampling coordinates (WWDC17 session 510).
+            // PerspectiveTransform needs forward source-to-destination corners instead.
+            // Invalid geometry must fail here, not silently fall back to translation.
+            return try ImageAlignment.warp(image, matrix: simd_inverse(observation.warpTransform), registrationScale: registrationScale)
+        }
         let correction = try alignment(for: image)
         let matrix = simd_float3x3(columns: (SIMD3(1, 0, 0), SIMD3(0, 1, 0),
                                              SIMD3(Float(correction.tx), Float(correction.ty), 1)))
