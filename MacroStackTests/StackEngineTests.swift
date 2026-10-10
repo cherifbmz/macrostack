@@ -1,10 +1,11 @@
 import XCTest
 import CoreImage
+import simd
 @testable import MacroStack
 
 final class StackEngineTests: XCTestCase {
     func testNoiseAverageUsesLinearLight() throws {
-        let engine = try StackEngine(maximumDimension: 64, registerImages: false)
+        let engine = try StackEngine(maximumDimension: 64, registerImages: false, protectMotion: false)
         try engine.add(image: solid(0))
         try engine.add(image: solid(255))
         try engine.finishGroup()
@@ -91,6 +92,93 @@ final class StackEngineTests: XCTestCase {
         let output = try engine.outputImage()
         XCTAssertEqual(output.width, 32)
         XCTAssertEqual(output.height, 32)
+    }
+
+    func testSofterRepeatDoesNotBlurSharpFrame() throws {
+        let sharp = fixture(size: 128) { x, y in ((x / 4 + y / 4) % 2 == 0) ? 220 : 30 }
+        let blurred = sharp.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 3]).cropped(to: sharp.extent)
+        let engine = try StackEngine(maximumDimension: 128, registerImages: false)
+        XCTAssertTrue(try engine.add(image: sharp))
+        XCTAssertFalse(try engine.add(image: blurred))
+        try engine.finishGroup()
+        XCTAssertEqual(engine.rejectedFrames, 1)
+        XCTAssertLessThan(error(bytes(try engine.outputImage()), bytes(render(sharp)), width: 128, columns: 8..<120), 2)
+    }
+
+    func testMovingPatchIsNotAveragedIntoReference() throws {
+        let original = fixture(size: 128) { x, y in ((x / 3 + y / 3) % 2 == 0) ? 120 : 60 }
+        let moving = fixture(size: 128) { x, y in
+            if (48..<64).contains(x) && (48..<64).contains(y) { return 250 }
+            return ((x / 3 + y / 3) % 2 == 0) ? 120 : 60
+        }
+        let engine = try StackEngine(maximumDimension: 128, registerImages: false)
+        try engine.add(image: original)
+        try engine.add(image: moving)
+        try engine.finishGroup()
+        let actual = bytes(try engine.outputImage())
+        let expected = bytes(render(original))
+        XCTAssertLessThan(error(actual, expected, width: 128, columns: 50..<62), 3)
+    }
+
+    func testPerspectiveRegistrationCorrectsScaleAndRotation() throws {
+        let size = 256
+        let reference = fixture(size: size) { x, y in
+            UInt8(truncatingIfNeeded: ((x / 5) &* 73856093) ^ ((y / 5) &* 19349663))
+        }
+        let transform = CGAffineTransform(translationX: -128, y: -128)
+            .concatenating(CGAffineTransform(scaleX: 1.035, y: 1.035))
+            .concatenating(CGAffineTransform(rotationAngle: 0.018))
+            .concatenating(CGAffineTransform(translationX: 130, y: 126))
+        let moving = reference.clampedToExtent().transformed(by: transform).cropped(to: reference.extent)
+        let engine = try StackEngine(maximumDimension: size)
+        try engine.add(image: reference)
+        let registered = try engine.register(moving)
+        let truth = bytes(render(reference))
+        let initialError = error(bytes(render(moving)), truth, width: size, columns: 32..<224)
+        let correctedError = error(bytes(render(registered.image)), truth, width: size, columns: 32..<224)
+        XCTAssertEqual(engine.translationFallbacks, 0)
+        XCTAssertLessThan(correctedError, initialError * 0.65)
+    }
+
+    func testInvalidWarpIsRejected() throws {
+        let image = solid(100)
+        var matrix = matrix_identity_float3x3
+        matrix.columns.2.x = 1000
+        XCTAssertThrowsError(try ImageAlignment.warp(image, matrix: matrix, registrationScale: 1))
+        matrix.columns.2.x = .nan
+        XCTAssertThrowsError(try ImageAlignment.warp(image, matrix: matrix, registrationScale: 1))
+    }
+
+    func testComparisonUsesIdenticalCrop() throws {
+        let image = fixture(size: 128) { x, y in UInt8(truncatingIfNeeded: x * 31 ^ y * 17) }
+        let engine = try StackEngine(maximumDimension: 128, registerImages: false)
+        try engine.add(image: image)
+        try engine.finishGroup()
+        let output = try engine.outputImage()
+        let reference = try engine.referenceImage()
+        XCTAssertEqual(output.width, reference.width)
+        XCTAssertEqual(output.height, reference.height)
+        XCTAssertLessThan(error(bytes(output), bytes(reference), width: 128, columns: 8..<120), 2)
+    }
+
+    func testAutomaticSweepStartsAtFocusedSubjectAndStaysInRange() {
+        for center: Float in [0, 0.02, 0.5, 0.98, 1] {
+            var settings = StackSettings()
+            settings.center(on: center)
+            XCTAssertEqual(settings.positions.first, center)
+            XCTAssertEqual(settings.positions.count, settings.focusSteps)
+            XCTAssertTrue(settings.positions.allSatisfy { (0...1).contains($0) })
+            XCTAssertEqual(Set(settings.positions).count, settings.focusSteps)
+        }
+    }
+
+    func testSingleModeTakesOneFullResolutionPhoto() {
+        var settings = StackSettings()
+        settings.mode = .single
+        settings.center(on: 0.72)
+        XCTAssertEqual(settings.totalFrames, 1)
+        XCTAssertEqual(settings.positions, [0.72])
+        XCTAssertEqual(settings.maximumDimension, 4096)
     }
 
     private func solid(_ value: UInt8) -> CIImage { fixture(size: 64) { _, _ in value } }

@@ -11,6 +11,10 @@ struct StackResult: Identifiable {
     let referenceURL: URL
     let frames: Int
     let positions: Int
+    let rejected: Int
+    let fallbacks: Int
+    let directory: URL
+    let originalsSaved: Bool
 }
 
 @MainActor
@@ -28,6 +32,7 @@ final class CameraModel: ObservableObject {
     private var captureTask: Task<Void, Never>?
     private var starting = false
     private var foreground = true
+    private var focusPoint = CGPoint(x: 0.5, y: 0.5)
 
     func start() async {
         foreground = true
@@ -37,10 +42,13 @@ final class CameraModel: ObservableObject {
         do {
             try await camera.start()
             guard foreground else { await camera.stop(); return }
-            try await camera.focus(at: settings.near)
+            try await camera.setExposureBias(settings.exposureBias)
+            if settings.automaticFocus {
+                settings.center(on: try await camera.autofocus(at: focusPoint))
+            } else { try await camera.focus(at: settings.near) }
             guard foreground else { return }
             isReady = true
-            status = "Frame your subject, then preview both focus endpoints."
+            status = "Tap the subject to focus. Use Single for a quick photo or Both for a still subject."
         } catch is CancellationError { }
         catch { status = "Camera unavailable"; errorMessage = error.localizedDescription }
     }
@@ -63,10 +71,35 @@ final class CameraModel: ObservableObject {
         }
     }
 
+    func autofocus(at point: CGPoint? = nil) {
+        guard isReady, !isBusy, !isAdjusting else { return }
+        if let point { focusPoint = point }
+        isAdjusting = true
+        status = "Focusing on your subject…"
+        Task {
+            defer { isAdjusting = false }
+            do {
+                let position = try await camera.autofocus(at: focusPoint)
+                settings.center(on: position)
+                status = "Focus ready. The sweep will start at your subject's focus."
+            } catch is CancellationError { }
+            catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    func updateExposure() {
+        guard isReady, !isBusy else { return }
+        let bias = settings.exposureBias
+        Task {
+            do { try await camera.setExposureBias(bias) }
+            catch { errorMessage = error.localizedDescription }
+        }
+    }
+
     func capture() {
         guard isReady, !isBusy, !isAdjusting else { return }
-        let settings = settings
-        guard settings.mode == .clean || abs(settings.near - settings.far) > 0.005 else {
+        var settings = settings
+        guard settings.automaticFocus || !settings.mode.sweepsFocus || abs(settings.near - settings.far) > 0.005 else {
             errorMessage = "Choose different focus endpoints, or use Noise mode for a fixed-focus burst."
             return
         }
@@ -80,6 +113,18 @@ final class CameraModel: ObservableObject {
                 UIApplication.shared.isIdleTimerDisabled = false
             }
             do {
+                for seconds in stride(from: settings.timerSeconds, to: 0, by: -1) {
+                    status = "Starting in \(seconds)… keep the phone still"
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+                try await camera.setExposureBias(settings.exposureBias)
+                if settings.automaticFocus {
+                    status = "Autofocusing and metering your subject…"
+                    settings.center(on: try await camera.autofocus(at: focusPoint))
+                    self.settings.center(on: settings.focusCenter)
+                }
+                try Task.checkCancellation()
+                let archive = try CaptureArchive(settings: settings)
                 try await worker.begin(maximumDimension: settings.maximumDimension)
                 try Task.checkCancellation()
                 // Lock the metered preview exposure. Let the preview settle before pressing Capture.
@@ -94,8 +139,14 @@ final class CameraModel: ObservableObject {
                         status = "Focus \(index + 1)/\(settings.positions.count) · photo \(repeatIndex + 1)/\(settings.repeats)"
                         let data = try await camera.photo()
                         try Task.checkCancellation()
+                        if settings.keepOriginals {
+                            let number = captured + 1
+                            try await Task.detached(priority: .utility) {
+                                try archive.saveOriginal(data, index: number, focus: position)
+                            }.value
+                        }
                         status = "Aligning photo \(captured + 1) of \(settings.totalFrames)…"
-                        try await worker.add(data: data)
+                        _ = try await worker.add(data: data)
                         captured += 1
                         progress = Double(captured) / Double(settings.totalFrames)
                     }
@@ -104,16 +155,19 @@ final class CameraModel: ObservableObject {
                 }
                 try Task.checkCancellation()
                 status = "Rendering your photo…"
-                let (image, reference) = try await worker.finish()
+                let (image, reference, rejected, fallbacks) = try await worker.finish()
                 try Task.checkCancellation()
                 // Encode large JPEGs off the UI thread, without sending photos to a server.
-                let urls = try await Task.detached(priority: .userInitiated) {
-                    try Self.writeResults(image: image, reference: reference)
+                let count = captured
+                try await Task.detached(priority: .userInitiated) {
+                    try archive.complete(image: image, reference: reference, frames: count, rejected: rejected, fallbacks: fallbacks)
                 }.value
                 try Task.checkCancellation()
                 result = StackResult(image: UIImage(cgImage: image), reference: UIImage(cgImage: reference),
-                                     url: urls.0, referenceURL: urls.1, frames: captured, positions: settings.positions.count)
-                status = "Stack complete. Compare it with the first photo before saving."
+                                     url: archive.outputURL, referenceURL: archive.referenceURL, frames: captured,
+                                     positions: settings.positions.count, rejected: rejected, fallbacks: fallbacks,
+                                     directory: archive.directory, originalsSaved: settings.keepOriginals)
+                status = "Photo ready. Pinch to inspect the stack and best single photo."
             } catch is CancellationError {
                 status = "Capture cancelled."
                 await worker.discard()
@@ -131,20 +185,5 @@ final class CameraModel: ObservableObject {
         status = "Cancelling after the current operation…"
     }
 
-    nonisolated private static func writeResults(image: CGImage, reference: CGImage) throws -> (URL, URL) {
-        let documents = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-        let directory = documents.appendingPathComponent("Stacks/\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let output = directory.appendingPathComponent("MacroStack.jpg")
-        let original = directory.appendingPathComponent("First-photo.jpg")
-        for (cgImage, url) in [(image, output), (reference, original)] {
-            guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
-                throw MacroError.message("Could not create the output file.")
-            }
-            CGImageDestinationAddImage(destination, cgImage, [kCGImageDestinationLossyCompressionQuality: 0.97] as CFDictionary)
-            guard CGImageDestinationFinalize(destination) else { throw MacroError.message("Could not save the image. Check available storage.") }
-        }
-        return (output, original)
-    }
 }
 

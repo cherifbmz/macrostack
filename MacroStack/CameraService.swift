@@ -2,7 +2,7 @@
 import Foundation
 
 /// All session/device state lives on queue; callers can await operations from the UI.
-final class CameraService: NSObject, AVCapturePhotoCaptureDelegate {
+final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked Sendable {
     let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "macrostack.camera", qos: .userInitiated)
     private let output = AVCapturePhotoOutput()
@@ -13,6 +13,8 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate {
     private var photoResult: Result<Data, Error>?
     private var focusID: UUID?
     private var focusContinuation: CheckedContinuation<Void, Error>?
+    private var autofocusID: UUID?
+    private var autofocusContinuation: CheckedContinuation<Float, Error>?
 
     func start() async throws {
         let allowed = await AVCaptureDevice.requestAccess(for: .video)
@@ -64,7 +66,7 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate {
                     continuation.resume(throwing: MacroError.message("Start the camera before setting focus."))
                     return
                 }
-                guard self.focusContinuation == nil else {
+                guard self.focusContinuation == nil, self.autofocusContinuation == nil else {
                     continuation.resume(throwing: MacroError.message("A focus adjustment is already running."))
                     return
                 }
@@ -91,6 +93,68 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate {
         focusContinuation = nil
         focusID = nil
         if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+    }
+
+    func autofocus(at point: CGPoint) async throws -> Float {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                guard let device = self.device, self.session.isRunning,
+                      device.isFocusModeSupported(.autoFocus), self.focusContinuation == nil,
+                      self.autofocusContinuation == nil else {
+                    continuation.resume(throwing: MacroError.message("Autofocus is unavailable. Wait for the camera, or use manual focus."))
+                    return
+                }
+                do {
+                    try device.lockForConfiguration()
+                    if device.isFocusPointOfInterestSupported { device.focusPointOfInterest = point }
+                    if device.isExposurePointOfInterestSupported { device.exposurePointOfInterest = point }
+                    if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
+                    if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { device.whiteBalanceMode = .continuousAutoWhiteBalance }
+                    device.focusMode = .autoFocus
+                    device.unlockForConfiguration()
+                    let id = UUID()
+                    self.autofocusID = id
+                    self.autofocusContinuation = continuation
+                    self.queue.asyncAfter(deadline: .now() + 0.4) {
+                        self.pollAutofocus(id: id, deadline: Date().addingTimeInterval(6), stableSamples: 0)
+                    }
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    private func pollAutofocus(id: UUID, deadline: Date, stableSamples: Int) {
+        guard autofocusID == id, let continuation = autofocusContinuation else { return }
+        guard let device, session.isRunning else {
+            autofocusID = nil; autofocusContinuation = nil
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        let settled = !device.isAdjustingFocus && !device.isAdjustingExposure && !device.isAdjustingWhiteBalance
+        let stable = settled ? stableSamples + 1 : 0
+        if stable >= 3 {
+            autofocusID = nil; autofocusContinuation = nil
+            continuation.resume(returning: device.lensPosition)
+        } else if Date() >= deadline {
+            autofocusID = nil; autofocusContinuation = nil
+            continuation.resume(throwing: MacroError.message("Focus or exposure could not settle. Add light, move slightly farther away, or set focus manually."))
+        } else {
+            queue.asyncAfter(deadline: .now() + 0.12) { self.pollAutofocus(id: id, deadline: deadline, stableSamples: stable) }
+        }
+    }
+
+    func setExposureBias(_ value: Float) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                do {
+                    guard let device = self.device else { throw MacroError.message("Camera unavailable.") }
+                    try device.lockForConfiguration()
+                    device.setExposureTargetBias(min(device.maxExposureTargetBias, max(device.minExposureTargetBias, value)), completionHandler: nil)
+                    device.unlockForConfiguration()
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
     }
 
     func lockExposure() async throws {
@@ -179,6 +243,10 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate {
     func stop() async {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             queue.async {
+                if let pending = self.autofocusContinuation {
+                    self.autofocusContinuation = nil; self.autofocusID = nil
+                    pending.resume(throwing: CancellationError())
+                }
                 if let id = self.focusID { self.finishFocus(id: id, error: CancellationError()) }
                 if let id = self.photoID { self.finishPhoto(id: id, error: CancellationError()) }
                 if self.session.isRunning { self.session.stopRunning() }

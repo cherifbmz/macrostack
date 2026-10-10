@@ -1,15 +1,20 @@
 import CoreImage
 import ImageIO
 import Vision
+import simd
 
 /// A streaming, linear-light prototype. Only a few rendered frames are retained.
-/// Translation registration assumes a supported phone and a stationary subject.
+/// Perspective registration tolerates small rotation and focus breathing, not subject motion.
 final class StackEngine {
     private let context: CIContext
     private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     private let maximumDimension: Int
     private let registerImages: Bool
     private let selectionKernel: CIColorKernel
+    private let averagingKernel: CIColorKernel
+    private let blendKernel: CIColorKernel
+    private let protectMotion: Bool
+    private let linearSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
     private var reference: CIImage?
     private var registrationReference: CIImage?
     private var registrationScale: CGFloat = 1
@@ -18,12 +23,18 @@ final class StackEngine {
     private var groupCount = 0
     private var fused: CIImage?
     private var bestScore: CIImage?
+    private var bestImage: CIImage?
+    private var bestImageDetail: Float = -1
+    private var groupDetail: Float = 0
     private(set) var frameCount = 0
     private(set) var groupTotal = 0
+    private(set) var rejectedFrames = 0
+    private(set) var translationFallbacks = 0
 
-    init(maximumDimension: Int, registerImages: Bool = true) throws {
+    init(maximumDimension: Int, registerImages: Bool = true, protectMotion: Bool = true) throws {
         self.maximumDimension = maximumDimension
         self.registerImages = registerImages
+        self.protectMotion = protectMotion
         context = CIContext(options: [
             .cacheIntermediates: false,
             .workingColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!,
@@ -31,23 +42,40 @@ final class StackEngine {
         ])
         guard let kernel = CIColorKernel(source: """
             kernel vec4 chooseSharper(__sample candidate, __sample previous) {
-                float threshold = max(previous.r * 1.08, previous.r + 0.002);
-                float pick = step(threshold, candidate.r);
+                float ratio = (candidate.r + 0.0005) / (previous.r + 0.0005);
+                float pick = smoothstep(1.04, 1.35, ratio);
                 return vec4(pick, pick, pick, 1.0);
             }
             """) else { throw MacroError.message("The image processing kernel could not be loaded.") }
         selectionKernel = kernel
+        guard let average = CIColorKernel(source: """
+            kernel vec4 averageProtected(__sample previous, __sample candidate, float weight, float protect) {
+                vec3 delta = abs(previous.rgb - candidate.rgb);
+                float difference = max(delta.r, max(delta.g, delta.b));
+                float agreement = mix(1.0, 1.0 - smoothstep(0.08, 0.24, difference), protect);
+                return vec4(mix(previous.rgb, candidate.rgb, weight * agreement), 1.0);
+            }
+            """), let blend = CIColorKernel(source: """
+            kernel vec4 blendDetail(__sample previous, __sample candidate,
+                __sample previousLow, __sample candidateLow, __sample fineMask, __sample coarseMask) {
+                vec3 low = mix(previousLow.rgb, candidateLow.rgb, coarseMask.r);
+                vec3 detail = mix(previous.rgb - previousLow.rgb, candidate.rgb - candidateLow.rgb, fineMask.r);
+                return vec4(clamp(low + detail, 0.0, 1.0), 1.0);
+            }
+            """) else { throw MacroError.message("Could not load image processing kernels.") }
+        averagingKernel = average
+        blendKernel = blend
     }
 
-    func add(data: Data) throws {
+    @discardableResult func add(data: Data) throws -> Bool {
         guard let image = CIImage(data: data, options: [.applyOrientationProperty: true]) else {
             throw MacroError.message("A captured photo could not be decoded.")
         }
-        try add(image: image)
+        return try add(image: image)
     }
 
     /// Also used by synthetic image tests, without a camera.
-    func add(image: CIImage) throws {
+    @discardableResult func add(image: CIImage) throws -> Bool {
         var input = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
         let scale = min(1, CGFloat(maximumDimension) / max(input.extent.width, input.extent.height))
         if scale < 1 {
@@ -66,27 +94,39 @@ final class StackEngine {
         guard input.extent.size == reference.extent.size else { throw MacroError.message("Photo dimensions changed during the stack.") }
 
         if registerImages && frameCount > 0 {
-            let translation = try alignment(for: input)
-            guard abs(translation.tx) < size.width * 0.03, abs(translation.ty) < size.height * 0.03 else {
-                throw MacroError.message("The phone moved too far. Support it and try a smaller focus range.")
-            }
-            input = input.transformed(by: translation)
-            commonRect = commonRect.intersection(input.extent)
-            guard commonRect.width * commonRect.height > size.width * size.height * 0.85 else {
+            let registered = try register(input)
+            input = registered.image
+            commonRect = commonRect.intersection(registered.validRect)
+            guard commonRect.width * commonRect.height > size.width * size.height * 0.72 else {
                 throw MacroError.message("Too little overlap remains between photos. Keep the phone still and retry.")
             }
         }
         input = input.cropped(to: reference.extent)
-        if let mean {
-            // CIContext works in linear RGB: averaging gamma-encoded bytes would darken the result.
-            let average = mean.applyingFilter("CIDissolveTransition", parameters: [
-                kCIInputTargetImageKey: input,
-                kCIInputTimeKey: 1.0 / Double(groupCount + 1)
-            ])
-            self.mean = try rendered(average, in: reference.extent)
-        } else { mean = try rendered(input, in: reference.extent) }
-        groupCount += 1
+        let detail = detailMetric(input)
         frameCount += 1
+        if groupCount > 0 && groupDetail > 0.002 && detail < groupDetail * 0.65 {
+            rejectedFrames += 1
+            return false
+        }
+        if detail > bestImageDetail {
+            bestImageDetail = detail
+            bestImage = try rendered(input, in: reference.extent)
+        }
+        // A later, substantially sharper frame replaces a blurred group anchor.
+        if groupCount > 0 && detail > max(0.002, groupDetail * 1.5) {
+            rejectedFrames += groupCount
+            mean = nil; groupCount = 0
+        }
+        if let mean {
+            guard let average = averagingKernel.apply(extent: reference.extent,
+                arguments: [mean, input, 1.0 / Double(groupCount + 1), protectMotion ? 1.0 : 0.0]) else {
+                throw MacroError.message("Could not average these photos.")
+            }
+            self.mean = try rendered(average, in: reference.extent, highPrecision: true)
+        } else { mean = try rendered(input, in: reference.extent, highPrecision: true) }
+        groupDetail = max(groupDetail, detail)
+        groupCount += 1
+        return true
     }
 
     func finishGroup() throws {
@@ -97,12 +137,13 @@ final class StackEngine {
             guard let selection = selectionKernel.apply(extent: extent, arguments: [score, bestScore]) else {
                 throw MacroError.message("Could not calculate the focus selection mask.")
             }
-            let feathered = selection.clampedToExtent()
-                .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 1.5]).cropped(to: extent)
-            let merged = mean.applyingFilter("CIBlendWithMask", parameters: [
-                kCIInputBackgroundImageKey: fused, kCIInputMaskImageKey: feathered
-            ])
-            self.fused = try rendered(merged, in: extent)
+            func blur(_ image: CIImage, _ radius: Double) -> CIImage {
+                image.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius]).cropped(to: extent)
+            }
+            guard let merged = blendKernel.apply(extent: extent, arguments: [
+                fused, mean, blur(fused, 4), blur(mean, 4), blur(selection, 0.8), blur(selection, 8)
+            ]) else { throw MacroError.message("Could not blend focus detail.") }
+            self.fused = try rendered(merged, in: extent, highPrecision: true)
             self.bestScore = try rendered(score.applyingFilter("CIMaximumCompositing", parameters: [kCIInputBackgroundImageKey: bestScore]), in: extent)
         } else {
             fused = mean
@@ -110,28 +151,31 @@ final class StackEngine {
         }
         self.mean = nil
         groupCount = 0
+        groupDetail = 0
         groupTotal += 1
         context.clearCaches()
     }
 
     func outputImage() throws -> CGImage {
         guard groupCount == 0, let fused else { throw MacroError.message("Finish each focus group before exporting.") }
+        return try export(fused)
+    }
+
+    private func export(_ image: CIImage) throws -> CGImage {
         // Shrink inward, never outward: exclude every translated edge and interpolation fringe.
         let inset = registerImages && frameCount > 1 ? commonRect.insetBy(dx: 3, dy: 3) : commonRect
         let crop = CGRect(x: ceil(inset.minX), y: ceil(inset.minY),
                           width: floor(inset.maxX) - ceil(inset.minX), height: floor(inset.maxY) - ceil(inset.minY))
         guard crop.width > 0, crop.height > 0,
-              let output = context.createCGImage(fused, from: crop, format: .RGBA8, colorSpace: colorSpace) else {
+              let output = context.createCGImage(image, from: crop, format: .RGBA8, colorSpace: colorSpace) else {
             throw MacroError.message("Could not render the finished image.")
         }
         return output
     }
 
     func referenceImage() throws -> CGImage {
-        guard let reference, let result = context.createCGImage(reference, from: reference.extent, format: .RGBA8, colorSpace: colorSpace) else {
-            throw MacroError.message("Could not render the reference image.")
-        }
-        return result
+        guard let bestImage else { throw MacroError.message("Missing comparison photo.") }
+        return try export(bestImage)
     }
 
     private func sharpness(_ image: CIImage) -> CIImage {
@@ -143,11 +187,51 @@ final class StackEngine {
             .cropped(to: image.extent)
     }
 
-    private func rendered(_ image: CIImage, in rect: CGRect) throws -> CIImage {
+    private func rendered(_ image: CIImage, in rect: CGRect, highPrecision: Bool = false) throws -> CIImage {
+        if highPrecision {
+            let rowBytes = Int(rect.width) * 8
+            var data = Data(count: rowBytes * Int(rect.height))
+            data.withUnsafeMutableBytes { buffer in
+                context.render(image, toBitmap: buffer.baseAddress!, rowBytes: rowBytes,
+                               bounds: rect, format: .RGBAh, colorSpace: linearSpace)
+            }
+            return CIImage(bitmapData: data, bytesPerRow: rowBytes, size: rect.size, format: .RGBAh, colorSpace: linearSpace)
+                .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
+        }
         guard let cg = context.createCGImage(image, from: rect, format: .RGBA8, colorSpace: colorSpace) else {
             throw MacroError.message("Image processing ran out of resources. Try Standard resolution or fewer photos.")
         }
         return CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
+    }
+
+    private func detailMetric(_ image: CIImage) -> Float {
+        let scale = min(1, 512 / max(image.extent.width, image.extent.height))
+        let small = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let edges = sharpness(small)
+        let average = edges.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: small.extent)])
+        var pixel = [Float](repeating: 0, count: 4)
+        pixel.withUnsafeMutableBytes {
+            context.render(average, toBitmap: $0.baseAddress!, rowBytes: 16,
+                           bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: linearSpace)
+        }
+        return pixel[0]
+    }
+
+    func register(_ image: CIImage) throws -> RegisteredFrame {
+        guard let registrationReference else { throw MacroError.message("Missing alignment reference.") }
+        let request = VNHomographicImageRegistrationRequest(targetedCIImage: try registrationImage(image), options: [:])
+        do {
+            try VNImageRequestHandler(ciImage: registrationReference, options: [:]).perform([request])
+            if let observation = request.results?.first {
+                return try ImageAlignment.warp(image, matrix: observation.warpTransform, registrationScale: registrationScale)
+            }
+        } catch { /* Use a constrained translation fallback if perspective registration fails. */ }
+        let correction = try alignment(for: image)
+        let matrix = simd_float3x3(columns: (SIMD3(1, 0, 0), SIMD3(0, 1, 0),
+                                             SIMD3(Float(correction.tx), Float(correction.ty), 1)))
+        let result = try ImageAlignment.warp(image, matrix: matrix, registrationScale: 1)
+        translationFallbacks += 1
+        return result
     }
 
     private func registrationImage(_ image: CIImage) throws -> CIImage {
@@ -177,19 +261,19 @@ final class StackWorker {
         try await run { self.engine = try StackEngine(maximumDimension: maximumDimension) }
     }
 
-    func add(data: Data) async throws {
-        try await run { guard let engine = self.engine else { throw MacroError.message("No active stack.") }; try engine.add(data: data) }
+    func add(data: Data) async throws -> Bool {
+        try await run { guard let engine = self.engine else { throw MacroError.message("No active stack.") }; return try engine.add(data: data) }
     }
 
     func finishGroup() async throws {
         try await run { guard let engine = self.engine else { throw MacroError.message("No active stack.") }; try engine.finishGroup() }
     }
 
-    func finish() async throws -> (CGImage, CGImage) {
+    func finish() async throws -> (CGImage, CGImage, Int, Int) {
         try await run {
             guard let engine = self.engine else { throw MacroError.message("No active stack.") }
             defer { self.engine = nil }
-            return (try engine.outputImage(), try engine.referenceImage())
+            return (try engine.outputImage(), try engine.referenceImage(), engine.rejectedFrames, engine.translationFallbacks)
         }
     }
 
