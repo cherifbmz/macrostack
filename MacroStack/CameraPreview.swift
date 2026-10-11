@@ -48,6 +48,10 @@ struct CameraPreview: UIViewRepresentable {
         view.onFocus = onFocus
         if let connection = view.previewLayer.connection, connection.isVideoOrientationSupported {
             connection.videoOrientation = .portrait
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = false
+            }
         }
     }
 }

@@ -34,7 +34,77 @@ final class CameraModel: ObservableObject {
     @Published var isBusy = false
     @Published var isAdjusting = false
     @Published var progress = 0.0
-    @Published var status = "Opening Ultra Wide camera…"
+    @Published var status = "Opening camera…"
+    @Published var cameras: [CameraChoice] = []
+    @Published var selectedCameraID: String?
+    @Published var torchAvailable = false
+    @Published var torchLevel: Float = 0
+    @Published var lightStrength: Float = 0.5
+    @Published var isChangingLight = false
+    var selectedCamera: CameraChoice? { cameras.first { $0.id == selectedCameraID } }
+    var canStackFocus: Bool { selectedCamera?.supportsFocusStack ?? false }
+    var canUseMoving: Bool { selectedCamera?.supportsCustomExposure ?? false }
+    var controlsLocked: Bool { isBusy || isAdjusting || isChangingLight }
+
+    private func applyHardware(_ state: CameraHardwareState) {
+        cameras = state.cameras; selectedCameraID = state.selectedID
+        torchAvailable = state.torchAvailable; torchLevel = state.torchLevel
+    }
+
+    func refreshHardware() async {
+        guard isReady, !isAdjusting, !isChangingLight else { return }
+        applyHardware(await camera.hardwareState())
+    }
+
+    func selectStyle(_ style: ShootingStyle) {
+        guard !controlsLocked else { return }
+        switch style {
+        case .still:
+            guard canStackFocus else { return }
+            settings.useStillInsectPreset()
+        case .moving:
+            guard canUseMoving else { return }
+            settings.useMovingInsectPreset()
+        case .photo:
+            settings.mode = .single; settings.automaticFocus = true; settings.timerSeconds = 0
+        }
+        status = "Tap your subject to focus."
+    }
+
+    func switchCamera(to id: String) {
+        guard isReady, !controlsLocked, selectedCameraID != id else { return }
+        isAdjusting = true
+        status = "Switching camera…"
+        Task {
+            defer { isAdjusting = false }
+            do {
+                applyHardware(try await camera.selectCamera(id: id))
+                guard foreground else { return }
+                settings.automaticFocus = true
+                focusPoint = CGPoint(x: 0.5, y: 0.5)
+                settings.subjectX = 0.5; settings.subjectY = 0.5
+                if selectedCamera?.supports(settings.mode) != true { settings.mode = .single }
+                try await camera.setExposureBias(settings.exposureBias)
+                let position = try await camera.autofocus(at: focusPoint)
+                settings.center(on: position); previewLensPosition = position
+                status = canStackFocus ? "Tap your subject to focus." : "Fixed-focus camera · Photo and Noise available."
+            } catch is CancellationError { }
+            catch {
+                applyHardware(await camera.hardwareState())
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func setLight(_ level: Float) {
+        guard isReady, !controlsLocked else { return }
+        isChangingLight = true
+        Task {
+            defer { isChangingLight = false }
+            do { applyHardware(try await camera.setTorch(level: level)) }
+            catch { applyHardware(await camera.hardwareState()); errorMessage = error.localizedDescription }
+        }
+    }
     @Published var errorMessage: String?
     @Published var result: StackResult?
     private var captureTask: Task<Void, Never>?
@@ -47,10 +117,21 @@ final class CameraModel: ObservableObject {
         foreground = true
         guard !isReady, !starting else { return }
         starting = true
-        defer { starting = false }
+        isAdjusting = true
+        defer { starting = false; isAdjusting = false }
+        #if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing") {
+            status = "Camera preview requires a physical iPhone."
+            return
+        }
+        #endif
         do {
             try await camera.start()
             guard foreground else { await camera.stop(); return }
+            applyHardware(await camera.hardwareState())
+            isReady = true
+            if selectedCamera?.supports(settings.mode) != true { settings.mode = .single }
+            if !canStackFocus { settings.automaticFocus = true }
             try await camera.setExposureBias(settings.exposureBias)
             if settings.automaticFocus {
                 settings.center(on: try await camera.autofocus(at: focusPoint))
@@ -58,20 +139,21 @@ final class CameraModel: ObservableObject {
             } else { try await camera.focus(at: settings.near); previewLensPosition = settings.near }
             guard foreground else { return }
             isReady = true
-            status = "Tap the insect's eye, then choose Still insect or Moving insect."
+            status = "Tap your subject to focus."
         } catch is CancellationError { }
-        catch { status = "Camera unavailable"; errorMessage = error.localizedDescription }
+        catch { status = error.localizedDescription }
     }
 
     func suspend() {
         foreground = false
         isReady = false
+        torchLevel = 0
         captureTask?.cancel()
         Task { await camera.stop() }
     }
 
     func previewFocus(_ position: Float) {
-        guard isReady, !isBusy, !isAdjusting else { return }
+        guard isReady, !controlsLocked, canStackFocus else { return }
         isAdjusting = true
         Task {
             defer { isAdjusting = false }
@@ -82,7 +164,7 @@ final class CameraModel: ObservableObject {
     }
 
     func autofocus(at point: CGPoint? = nil, imagePoint: CGPoint? = nil) {
-        guard isReady, !isBusy, !isAdjusting else { return }
+        guard isReady, !controlsLocked else { return }
         if let point { focusPoint = point }
         if let imagePoint {
             settings.subjectX = imagePoint.x
@@ -112,14 +194,20 @@ final class CameraModel: ObservableObject {
     }
 
     func markEndpoint(near: Bool) {
-        guard isReady, !isBusy, !isAdjusting else { return }
+        guard isReady, !controlsLocked, canStackFocus else { return }
         settings.automaticFocus = false
         if near { settings.near = previewLensPosition } else { settings.far = previewLensPosition }
         status = near ? "Near bracket saved. Tap the farthest detail, then set Far." : "Far bracket saved. Preview both ends before capturing."
     }
 
     func capture() {
-        guard isReady, !isBusy, !isAdjusting else { return }
+        guard isReady, !controlsLocked else { return }
+        guard selectedCamera?.supports(settings.mode) == true else {
+            errorMessage = "This camera does not support that capture mode. Choose Photo or another camera."
+            return
+        }
+        let manualFocus = canStackFocus
+        let cameraNotes = (selectedCamera?.subtitle ?? "Camera") + (torchLevel > 0 ? " · Continuous light. " : ". ")
         var settings = settings
         if settings.mode == .burst { settings.keepOriginals = true }
         guard settings.automaticFocus || !settings.mode.sweepsFocus || abs(settings.near - settings.far) > 0.005 else {
@@ -150,7 +238,7 @@ final class CameraModel: ObservableObject {
                 let archive = try CaptureArchive(settings: settings)
                 let exposureNotes: String
                 if settings.mode == .burst {
-                    if !settings.automaticFocus { try await camera.focus(at: settings.near) }
+                    if !settings.automaticFocus && manualFocus { try await camera.focus(at: settings.near) }
                     exposureNotes = try await camera.prepareBurstExposure(denominator: settings.shutterDenominator,
                                                                           continuousFocus: settings.automaticFocus)
                 } else {
@@ -163,7 +251,7 @@ final class CameraModel: ObservableObject {
                 let captureStarted = Date()
                 for (index, position) in settings.positions.enumerated() {
                     try Task.checkCancellation()
-                    if settings.mode != .burst {
+                    if settings.mode != .burst && manualFocus {
                         status = "Setting focus \(index + 1) of \(settings.positions.count)…"
                         try await camera.focus(at: position)
                     }
@@ -175,7 +263,7 @@ final class CameraModel: ObservableObject {
                         let data = try await camera.photo(quality: settings.mode == .burst ? .speed : settings.captureQuality)
                         try Task.checkCancellation()
                         let number = captured + 1
-                        let lens: Float? = settings.mode == .burst && settings.automaticFocus ? nil : position
+                        let lens: Float? = !manualFocus || (settings.mode == .burst && settings.automaticFocus) ? nil : position
                         let file = try await Task.detached(priority: .utility) {
                             try archive.saveOriginal(data, index: number, focus: lens)
                         }.value
@@ -184,7 +272,8 @@ final class CameraModel: ObservableObject {
                         progress = 0.6 * Double(captured) / Double(settings.totalFrames)
                     }
                 }
-                let captureNotes = String(format: "Captured %d photos in %.1f seconds. ", captured, Date().timeIntervalSince(captureStarted)) + exposureNotes
+                let captureNotes = String(format: "Captured %d photos in %.1f seconds. ", captured, Date().timeIntervalSince(captureStarted)) + cameraNotes + exposureNotes
+                if let state = try? await camera.setTorch(level: 0) { applyHardware(state) }
                 await camera.restoreAutomaticExposure()
                 // Disk-backed capture keeps memory bounded and removes rendering pauses between photos.
                 try await worker.begin(maximumDimension: settings.maximumDimension,
@@ -223,6 +312,7 @@ final class CameraModel: ObservableObject {
                 errorMessage = error.localizedDescription
                 await worker.discard()
             }
+            if let state = try? await camera.setTorch(level: 0) { applyHardware(state) }
             await camera.restoreAutomaticExposure()
         }
     }

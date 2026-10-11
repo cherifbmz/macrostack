@@ -8,6 +8,8 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
     private let output = AVCapturePhotoOutput()
     private var device: AVCaptureDevice?
     private var configured = false
+    private var cameras: [AVCaptureDevice] = []
+    private var currentInput: AVCaptureDeviceInput?
     private var photoID: Int64?
     private var photoContinuation: CheckedContinuation<Data, Error>?
     private var photoResult: Result<Data, Error>?
@@ -37,28 +39,124 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
         }
     }
 
+    private func discoverCameras() -> [AVCaptureDevice] {
+        let back = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInUltraWideCamera, .builtInWideAngleCamera, .builtInTelephotoCamera],
+            mediaType: .video, position: .back).devices
+        let front = AVCaptureDevice.default(.builtInTrueDepthCamera, for: .video, position: .front)
+            ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+        return back + (front.map { [$0] } ?? [])
+    }
+
+    private func choice(_ camera: AVCaptureDevice) -> CameraChoice {
+        let title: String
+        let subtitle: String
+        if camera.position == .front { title = "Front"; subtitle = "Front camera" }
+        else if camera.deviceType == .builtInUltraWideCamera { title = "0.5×"; subtitle = "Ultra Wide · Macro" }
+        else if camera.deviceType == .builtInTelephotoCamera { title = "Tele"; subtitle = "Telephoto · Distant detail" }
+        else { title = "1×"; subtitle = "Main · Everyday photos" }
+        return CameraChoice(id: camera.uniqueID, title: title, subtitle: subtitle,
+            supportsFocusStack: camera.isLockingFocusWithCustomLensPositionSupported,
+            supportsCustomExposure: camera.isExposureModeSupported(.custom), hasTorch: camera.hasTorch)
+    }
+
+    private func stateOnQueue() -> CameraHardwareState {
+        CameraHardwareState(cameras: cameras.map(choice), selectedID: device?.uniqueID,
+            torchAvailable: device.map { $0.hasTorch && $0.isTorchAvailable && $0.isTorchModeSupported(.on) } ?? false,
+            torchLevel: device.map { $0.isTorchActive ? $0.torchLevel : 0 } ?? 0)
+    }
+
+    func hardwareState() async -> CameraHardwareState {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: self.stateOnQueue()) }
+        }
+    }
+
+    private func updatePhotoDimensions(for camera: AVCaptureDevice) {
+        output.maxPhotoQualityPrioritization = .quality
+        if let largest = camera.activeFormat.supportedMaxPhotoDimensions.max(by: {
+            Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+        }) { output.maxPhotoDimensions = largest }
+    }
+
     private func configure() throws {
-        guard let camera = AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back),
-              camera.isLockingFocusWithCustomLensPositionSupported else {
-            throw MacroError.message("This prototype needs an Ultra Wide camera with manual focus, such as iPhone 13 Pro or Pro Max. The simulator cannot capture photos.")
+        cameras = discoverCameras()
+        guard let camera = cameras.first else {
+            throw MacroError.message("No camera is available. Check camera access in Settings and retry on your iPhone.")
         }
         let input = try AVCaptureDeviceInput(device: camera)
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         session.sessionPreset = .photo
-        guard session.canAddInput(input) else { throw MacroError.message("Cannot open the Ultra Wide camera.") }
+        guard session.canAddInput(input) else { throw MacroError.message("Cannot open this camera.") }
         session.addInput(input)
         guard session.canAddOutput(output) else {
             session.removeInput(input)
             throw MacroError.message("Cannot configure photo capture.")
         }
         session.addOutput(output)
-        output.maxPhotoQualityPrioritization = .quality
-        if let largest = camera.activeFormat.supportedMaxPhotoDimensions.max(by: {
-            Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
-        }) { output.maxPhotoDimensions = largest }
+        updatePhotoDimensions(for: camera)
+        currentInput = input
         device = camera
         configured = true
+    }
+
+    func selectCamera(id: String) async throws -> CameraHardwareState {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    guard self.photoContinuation == nil, self.focusContinuation == nil,
+                          self.autofocusContinuation == nil, self.exposureContinuation == nil,
+                          let next = self.cameras.first(where: { $0.uniqueID == id }) else {
+                        throw MacroError.message("Wait for capture or focusing to finish before switching cameras.")
+                    }
+                    let input = try AVCaptureDeviceInput(device: next)
+                    // Do not carry an illuminated torch or old lens positions across a camera change.
+                    try self.turnTorchOff()
+                    self.session.beginConfiguration()
+                    defer { self.session.commitConfiguration() }
+                    let old = self.currentInput
+                    if let old { self.session.removeInput(old) }
+                    guard self.session.canAddInput(input) else {
+                        if let old, self.session.canAddInput(old) { self.session.addInput(old) }
+                        throw MacroError.message("Could not switch cameras. The previous camera remains selected.")
+                    }
+                    self.session.addInput(input)
+                    self.currentInput = input
+                    self.device = next
+                    self.updatePhotoDimensions(for: next)
+                    continuation.resume(returning: self.stateOnQueue())
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+
+    private func turnTorchOff() throws {
+        guard let device, device.hasTorch, device.isTorchModeSupported(.off) else { return }
+        try device.lockForConfiguration()
+        defer { device.unlockForConfiguration() }
+        device.torchMode = .off
+    }
+
+    func setTorch(level: Float) async throws -> CameraHardwareState {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    guard let device = self.device, self.session.isRunning else {
+                        throw MacroError.message("Start the camera before using the light.")
+                    }
+                    if level <= 0 { try self.turnTorchOff() }
+                    else {
+                        guard device.hasTorch, device.isTorchAvailable, device.isTorchModeSupported(.on) else {
+                            throw MacroError.message("The flashlight is unavailable on this camera or while the phone is too warm.")
+                        }
+                        try device.lockForConfiguration()
+                        defer { device.unlockForConfiguration() }
+                        try device.setTorchModeOn(level: min(1, max(0.01, level)))
+                    }
+                    continuation.resume(returning: self.stateOnQueue())
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
     }
 
     func focus(at position: Float) async throws {
@@ -66,6 +164,10 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
             queue.async {
                 guard let device = self.device, self.session.isRunning else {
                     continuation.resume(throwing: MacroError.message("Start the camera before setting focus."))
+                    return
+                }
+                guard device.isLockingFocusWithCustomLensPositionSupported else {
+                    continuation.resume(throwing: MacroError.message("Manual focus is unavailable on this camera. Use Photo or Noise mode."))
                     return
                 }
                 guard self.focusContinuation == nil, self.autofocusContinuation == nil else {
@@ -101,7 +203,7 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 guard let device = self.device, self.session.isRunning,
-                      device.isFocusModeSupported(.autoFocus), self.focusContinuation == nil,
+                      self.focusContinuation == nil,
                       self.autofocusContinuation == nil else {
                     continuation.resume(throwing: MacroError.message("Autofocus is unavailable. Wait for the camera, or use manual focus."))
                     return
@@ -112,7 +214,7 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
                     if device.isExposurePointOfInterestSupported { device.exposurePointOfInterest = point }
                     if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
                     if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { device.whiteBalanceMode = .continuousAutoWhiteBalance }
-                    device.focusMode = .autoFocus
+                    if device.isFocusModeSupported(.autoFocus) { device.focusMode = .autoFocus }
                     device.unlockForConfiguration()
                     let id = UUID()
                     self.autofocusID = id
@@ -251,6 +353,10 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
                 settings.flashMode = .off
                 if let connection = self.output.connection(with: .video), connection.isVideoOrientationSupported {
                     connection.videoOrientation = .portrait
+                    if connection.isVideoMirroringSupported {
+                        connection.automaticallyAdjustsVideoMirroring = false
+                        connection.isVideoMirrored = false
+                    }
                 }
                 self.photoID = settings.uniqueID
                 self.photoContinuation = continuation
@@ -299,6 +405,7 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
                 }
                 if let id = self.focusID { self.finishFocus(id: id, error: CancellationError()) }
                 if let id = self.photoID { self.finishPhoto(id: id, error: CancellationError()) }
+                try? self.turnTorchOff()
                 if self.session.isRunning { self.session.stopRunning() }
                 continuation.resume()
             }

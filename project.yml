@@ -27,19 +27,32 @@ targets:
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        MARKETING_VERSION: "0.4.0"
-        CURRENT_PROJECT_VERSION: "4"
+        MARKETING_VERSION: "0.5.0"
+        CURRENT_PROJECT_VERSION: "5"
   MacroStackTests:
     type: bundle.unit-test
     platform: iOS
     sources:
       - path: MacroStackTests
+        excludes: [UITests]
     dependencies:
       - target: MacroStack
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.personal.macrostack.tests
+  MacroStackUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: MacroStackTests/UITests
+    dependencies:
+      - target: MacroStack
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.personal.macrostack.uitests
+        TEST_TARGET_NAME: MacroStack
 schemes:
   MacroStack:
     build:
@@ -48,4 +61,5 @@ schemes:
     test:
       targets:
         - MacroStackTests
+        - MacroStackUITests
 

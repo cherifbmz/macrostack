@@ -13,7 +13,12 @@ struct ProjectGalleryView: View {
             List {
                 if loading { ProgressView("Reading saved projects…") }
                 if !loading && projects.isEmpty {
-                    Text("Your captures appear here automatically. Keep original camera photos enabled to re-stack them later.")
+                    VStack(spacing: 16) {
+                        Image(systemName: "square.stack.3d.up").font(.system(size: 40, weight: .light))
+                        Text("A home for your close-ups").font(.headline)
+                        Text("Take your first photo and it will appear here. Revisit captures, choose frames and refine the detail.")
+                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }.frame(maxWidth: .infinity).padding(.vertical, 48).listRowBackground(Color.clear)
                 }
                 ForEach(projects) { project in
                     NavigationLink {

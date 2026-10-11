@@ -4,239 +4,263 @@ import Photos
 struct ContentView: View {
     @StateObject private var model = CameraModel()
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showHelp = false
+    @State private var showSettings = false
     @State private var showProjects = false
     @State private var previewMagnified = false
-    private let accent = Color(red: 0.66, green: 0.91, blue: 0.48)
+    @State private var rangeStep = 0
+    private let accent = Color(red: 0.78, green: 0.94, blue: 0.52)
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    ZStack(alignment: .bottomLeading) {
-                        CameraPreview(session: model.camera.session, onFocus: { model.autofocus(at: $0, imagePoint: $1) })
-                            .aspectRatio(3.0 / 4.0, contentMode: .fit)
-                            .background(.black)
-                            .overlay {
-                                GeometryReader { geometry in
-                                    let region = model.settings.subjectRegion
-                                    Rectangle().stroke(.yellow.opacity(0.8), lineWidth: 1)
-                                        .frame(width: geometry.size.width * region.width, height: geometry.size.height * region.height)
-                                        .position(x: geometry.size.width * region.midX, y: geometry.size.height * (1 - region.midY))
-                                }.allowsHitTesting(false)
-                                if model.settings.showGrid {
-                                    GeometryReader { geometry in
-                                        Path { path in
-                                            for fraction in [CGFloat(1) / 3, CGFloat(2) / 3] {
-                                                path.move(to: CGPoint(x: geometry.size.width * fraction, y: 0))
-                                                path.addLine(to: CGPoint(x: geometry.size.width * fraction, y: geometry.size.height))
-                                                path.move(to: CGPoint(x: 0, y: geometry.size.height * fraction))
-                                                path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height * fraction))
-                                            }
-                                        }.stroke(.white.opacity(0.35), lineWidth: 0.5)
-                                    }.allowsHitTesting(false)
-                                }
-                            }
-                            .scaleEffect(previewMagnified ? 2 : 1)
-                        Text("ULTRA WIDE · MACRO")
-                            .font(.caption2.monospaced().weight(.semibold))
-                            .padding(10).background(.black.opacity(0.6), in: Capsule()).padding(12)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 22))
-                    .overlay(RoundedRectangle(cornerRadius: 22).stroke(.white.opacity(0.12)))
-
-                    Toggle("Magnify preview 2×", isOn: $previewMagnified).font(.caption)
-                    Text("Tap the insect's eye. The yellow box marks the area used to judge sharpness. Preview magnification helps check focus; saved photos keep the full view.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if model.settings.mode.sweepsFocus && !model.isBusy {
-                        HStack {
-                            Button("Set Near") { model.markEndpoint(near: true) }
-                            Button("Set Far") { model.markEndpoint(near: false) }
-                            Button("Near ▶") { model.previewFocus(model.settings.near) }
-                            Button("Far ▶") { model.previewFocus(model.settings.far) }
-                        }.font(.caption).buttonStyle(.bordered).disabled(!model.isReady || model.isAdjusting)
-                        Text("Tap the closest detail and Set Near; tap the farthest detail and Set Far. This switches to your manual range.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-
-                    Text(model.status).font(.subheadline).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("captureStatus")
-                    if model.isBusy {
-                        ProgressView(value: model.progress).tint(accent)
-                        Button("Cancel capture", role: .cancel) { model.cancel() }
-                            .buttonStyle(.bordered).frame(maxWidth: .infinity)
-                    } else {
-                        Button { model.capture() } label: {
-                            Label(model.settings.mode == .single ? "Take photo" : "Capture \(model.settings.totalFrames) photos", systemImage: "camera.aperture")
-                                .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
-                        }
-                        .buttonStyle(.borderedProminent).tint(accent).foregroundStyle(.black)
-                        .disabled(!model.isReady || model.isAdjusting)
-                        if !model.isReady {
-                            Button("Retry camera") { Task { await model.start() } }
-                        }
-                        controls
-                    }
-                    Text("Still insect needs a supported phone and a motionless subject. Moving insect uses individual burst photos; keep the insect inside the yellow box. It does not track an insect across the frame.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                .padding()
+        GeometryReader { geometry in
+            VStack(spacing: 10) {
+                topBar
+                viewfinder
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
+                lensPicker
+                modePicker
+                captureBar
             }
-            .background(Color(white: 0.055))
-            .navigationTitle("MacroStack")
-            .toolbar {
-                Button { model.suspend(); showProjects = true } label: { Image(systemName: "square.stack") }
-                    .accessibilityLabel("Projects and re-stacking").disabled(model.isBusy || model.isAdjusting)
-                Button { showHelp = true } label: { Image(systemName: "questionmark.circle") }.accessibilityLabel("Capture instructions")
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .frame(width: geometry.size.width, height: geometry.size.height)
+        }
+        .background(Color(white: 0.035).ignoresSafeArea())
+        .tint(accent)
+        .task {
+            await model.start()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { break }
+                await model.refreshHardware()
             }
-            .task { await model.start() }
-            .onChange(of: scenePhase) { phase in
-                if phase == .active { Task { await model.start() } }
-                else if phase == .background { model.suspend() }
-            }
-            .sheet(isPresented: $showHelp) { help }
-            .sheet(isPresented: $showProjects, onDismiss: { Task { await model.start() } }) { ProjectGalleryView() }
-            .sheet(item: $model.result) { result in
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active && !showProjects && model.result == nil { Task { await model.start() } }
+            else if phase == .background { model.suspend() }
+        }
+        .onChange(of: model.selectedCameraID) { _ in rangeStep = 0; previewMagnified = false }
+        .sheet(isPresented: $showSettings) {
+            CaptureSettingsView(model: model)
+        }
+        .sheet(isPresented: $showProjects, onDismiss: resumeCamera) { ProjectGalleryView() }
+        .sheet(item: $model.result, onDismiss: resumeCamera) { result in
+            Group {
                 if result.mode == .burst { BurstResultView(result: result) }
                 else { ResultView(result: result) }
+            }.onAppear { model.suspend() }
+        }
+        .alert("MacroStack", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
+            Button("OK") { model.errorMessage = nil }
+        } message: { Text(model.errorMessage ?? "") }
+    }
+
+    private func resumeCamera() {
+        if scenePhase == .active { Task { await model.start() } }
+    }
+
+    private var topBar: some View {
+        HStack {
+            Text("MacroStack").font(.title3.weight(.semibold)).tracking(-0.5)
+            Spacer()
+            Button { model.setLight(model.torchLevel > 0 ? 0 : model.lightStrength) } label: {
+                Image(systemName: model.torchLevel > 0 ? "flashlight.on.fill" : "flashlight.off.fill")
+                    .foregroundStyle(model.torchLevel > 0 ? accent : .white)
+                    .frame(width: 48, height: 48)
             }
-            .alert("MacroStack", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
-                Button("OK") { model.errorMessage = nil }
-            } message: { Text(model.errorMessage ?? "") }
+            .accessibilityLabel("Flashlight")
+            .accessibilityValue(model.torchLevel > 0 ? "On" : (model.torchAvailable ? "Off" : "Unavailable"))
+            .accessibilityIdentifier("flashlightButton")
+            .disabled(!model.isReady || model.controlsLocked || (!model.torchAvailable && model.torchLevel == 0))
+            Button { showSettings = true } label: {
+                Image(systemName: "slider.horizontal.3").frame(width: 48, height: 48)
+            }
+            .accessibilityLabel("Capture settings").accessibilityIdentifier("settingsButton")
+            .disabled(model.controlsLocked)
+        }.foregroundStyle(.white)
+    }
+
+    private var viewfinder: some View {
+        GeometryReader { proxy in
+            let width = min(proxy.size.width, proxy.size.height * 3 / 4)
+            ZStack {
+                Color(white: 0.075)
+                if model.isReady {
+                    CameraPreview(session: model.camera.session, onFocus: { model.autofocus(at: $0, imagePoint: $1) })
+                        .frame(width: width, height: width * 4 / 3)
+                        .overlay { compositionOverlay }
+                        .scaleEffect(previewMagnified ? 2 : 1)
+                } else {
+                    VStack(spacing: 14) {
+                        Image(systemName: "camera.macro").font(.system(size: 42, weight: .light)).foregroundStyle(accent)
+                        Text("Your next close-up").font(.headline)
+                        Text(model.status).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Button("Open camera") { Task { await model.start() } }
+                            .buttonStyle(.bordered).accessibilityIdentifier("retryCamera")
+                    }.padding(28)
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
+            .overlay(alignment: .topLeading) {
+                if model.isReady {
+                    Text(model.selectedCamera?.subtitle ?? "Camera")
+                        .font(.caption.weight(.medium)).padding(10)
+                        .background(.black.opacity(0.55), in: Capsule()).padding(12)
+                        .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if model.isReady {
+                    Button { previewMagnified.toggle() } label: {
+                        Image(systemName: previewMagnified ? "minus.magnifyingglass" : "plus.magnifyingglass")
+                            .frame(width: 44, height: 44).background(.black.opacity(0.55), in: Circle())
+                    }
+                    .accessibilityLabel(previewMagnified ? "Normal preview" : "Magnify preview only")
+                    .padding(10).disabled(model.isBusy)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if rangeStep > 0 && !model.isBusy { rangeGuide.padding(10) }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 24))
         }
     }
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Button("Still insect") { model.settings.useStillInsectPreset() }
-                Button("Moving insect") { model.settings.useMovingInsectPreset() }
-            }.buttonStyle(.bordered)
-            Picker("Stacking", selection: $model.settings.mode) {
-                ForEach(StackMode.allCases) { Text($0.rawValue).tag($0) }
-            }.pickerStyle(.segmented)
-            if model.settings.mode == .burst {
-                Stepper("Burst photos: \(model.settings.burstCount)", value: $model.settings.burstCount, in: 3...8)
-                Picker("Shutter speed", selection: $model.settings.shutterDenominator) {
-                    Text("1/250 s").tag(250); Text("1/500 s").tag(500); Text("1/1000 s").tag(1000)
-                }.pickerStyle(.segmented)
-                Text("Shorter exposures reduce motion blur but need more light and can increase noise. Burst favors capture speed, keeps every original, and never blends frames. It is a sequence of still photos, not high-speed video.")
-                    .font(.caption).foregroundStyle(.secondary)
+    private var compositionOverlay: some View {
+        GeometryReader { geometry in
+            if model.settings.showGrid {
+                Path { path in
+                    for fraction in [CGFloat(1) / 3, CGFloat(2) / 3] {
+                        path.move(to: CGPoint(x: geometry.size.width * fraction, y: 0))
+                        path.addLine(to: CGPoint(x: geometry.size.width * fraction, y: geometry.size.height))
+                        path.move(to: CGPoint(x: 0, y: geometry.size.height * fraction))
+                        path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height * fraction))
+                    }
+                }.stroke(.white.opacity(0.35), lineWidth: 0.5)
             }
-            Toggle("Automatic focus setup", isOn: $model.settings.automaticFocus)
-            if model.settings.automaticFocus {
-                Button { model.autofocus() } label: {
-                    Label(model.isAdjusting ? "Focusing…" : "Focus on subject", systemImage: "scope")
-                }.buttonStyle(.bordered).disabled(!model.isReady || model.isAdjusting)
-                Text(model.settings.mode == .burst
-                     ? "Tap the insect and keep it in that area. Focus is checked before capture, then continuous autofocus adjusts during the burst."
-                     : "Tap your subject in the preview. Focus is checked again before capture.")
-                    .font(.caption).foregroundStyle(.secondary)
-                if model.settings.mode.sweepsFocus {
-                    Picker("Focus depth", selection: $model.settings.focusSpan) {
-                        Text("Shallow").tag(Float(0.06))
-                        Text("Medium").tag(Float(0.12))
-                        Text("Deep").tag(Float(0.24))
-                    }.pickerStyle(.segmented)
-                    Text("Start Shallow for small details. Use a wider sweep for deeper subjects; this is not a depth measurement.")
-                        .font(.caption).foregroundStyle(.secondary)
+            let region = model.settings.subjectRegion
+            RoundedRectangle(cornerRadius: 10).stroke(accent.opacity(0.65), lineWidth: 1)
+                .frame(width: geometry.size.width * region.width, height: geometry.size.height * region.height)
+                .position(x: geometry.size.width * region.midX, y: geometry.size.height * (1 - region.midY))
+        }.allowsHitTesting(false)
+    }
+
+    private var rangeGuide: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text(rangeStep == 1 ? "1 · Tap the nearest detail" : (rangeStep == 2 ? "2 · Tap the farthest detail" : "Focus range ready"))
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Button {
+                    rangeStep = 0
+                    model.settings.automaticFocus = true
+                } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
+                    .accessibilityLabel("Use automatic focus range")
+            }
+            HStack {
+                if rangeStep < 3 {
+                    Button(rangeStep == 1 ? "Set near point" : "Set far point") {
+                        model.markEndpoint(near: rangeStep == 1)
+                        rangeStep += 1
+                    }.buttonStyle(.borderedProminent).foregroundStyle(.black)
+                } else {
+                    Button("Preview near") { model.previewFocus(model.settings.near) }
+                    Button("Preview far") { model.previewFocus(model.settings.far) }
+                    Button("Done") { rangeStep = 0 }
                 }
+            }.buttonStyle(.bordered).disabled(!model.isReady || model.controlsLocked)
+        }.padding(12).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var lensPicker: some View {
+        HStack(spacing: 6) {
+            ForEach(model.cameras) { camera in
+                Button { model.switchCamera(to: camera.id) } label: {
+                    Text(camera.title).font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity).frame(minHeight: 44)
+                        .foregroundStyle(model.selectedCameraID == camera.id ? .black : .white)
+                        .background(model.selectedCameraID == camera.id ? accent : Color(white: 0.12), in: Capsule())
+                }
+                .accessibilityLabel(camera.subtitle)
+                .accessibilityAddTraits(model.selectedCameraID == camera.id ? .isSelected : [])
+                .disabled(!model.isReady || model.controlsLocked)
+            }
+        }
+    }
+
+    private var modePicker: some View {
+        HStack(spacing: 0) {
+            ForEach(ShootingStyle.allCases) { style in
+                Button {
+                    rangeStep = 0
+                    model.selectStyle(style)
+                } label: {
+                    VStack(spacing: 5) {
+                        Text(style.rawValue).font(.subheadline.weight(.semibold))
+                        Capsule().fill(ShootingStyle.selected(for: model.settings.mode) == style ? accent : .clear)
+                            .frame(width: 18, height: 3)
+                    }.frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .foregroundStyle(ShootingStyle.selected(for: model.settings.mode) == style ? accent : .white.opacity(0.6))
+                .accessibilityIdentifier("mode" + style.rawValue)
+                .accessibilityAddTraits(ShootingStyle.selected(for: model.settings.mode) == style ? .isSelected : [])
+                .disabled(model.controlsLocked || (style == .still && !model.canStackFocus) || (style == .moving && !model.canUseMoving))
+            }
+        }
+    }
+
+    private var captureBar: some View {
+        VStack(spacing: 6) {
+            if model.isBusy {
+                ProgressView(value: model.progress).tint(accent)
+                Text(model.status).font(.caption).lineLimit(2).multilineTextAlignment(.center)
+                    .accessibilityIdentifier("captureStatus")
             } else {
-                focusControl(title: model.settings.mode.sweepsFocus ? "Near endpoint" : "Focus position", value: $model.settings.near)
-                if model.settings.mode.sweepsFocus { focusControl(title: "Far endpoint", value: $model.settings.far) }
-            }
-            if model.settings.mode.sweepsFocus {
-                Stepper("Focus positions: \(model.settings.focusSteps)", value: $model.settings.focusSteps, in: 3...20)
-                Picker("Focus spacing", selection: $model.settings.focusSpacing) {
-                    ForEach(FocusSpacing.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented)
-                Text("Near dense puts more focus positions near the closest end. Spacing is based on lens position, not a measured depth map.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if model.settings.mode != .burst {
-                Picker("Capture priority", selection: $model.settings.captureQuality) {
-                    ForEach(CaptureQuality.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented)
-                Text("Speed uses lighter camera processing; Quality favors detail. Output resolution stays the same.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if model.settings.mode == .both || model.settings.mode == .clean {
-                Stepper("Photos per position: \(model.settings.framesPerPosition)", value: $model.settings.framesPerPosition, in: 2...6)
+                Text(captureHint).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(2).multilineTextAlignment(.center)
+                    .accessibilityIdentifier("captureStatus")
             }
             HStack {
-                Text("Exposure")
-                Spacer()
-                Text(String(format: "%+.1f EV", model.settings.exposureBias)).monospacedDigit()
-            }
-            Slider(value: $model.settings.exposureBias, in: -2...2, step: 0.1, onEditingChanged: { editing in
-                if !editing { model.updateExposure() }
-            })
-            Picker("Capture timer", selection: $model.settings.timerSeconds) {
-                Text("Off").tag(0); Text("2 seconds").tag(2); Text("5 seconds").tag(5)
-            }
-            Toggle("Full resolution", isOn: $model.settings.fullResolution)
-            Text(model.settings.fullResolution
-                 ? "Uses the captured photo size up to 4096 px on the long edge. More processing time and memory."
-                 : "Standard: 2048 px on the long edge. Faster, but discards fine detail.")
-                .font(.caption).foregroundStyle(.secondary)
-            Toggle("Save original camera photos", isOn: Binding(get: {
-                model.settings.mode == .burst || model.settings.keepOriginals
-            }, set: { model.settings.keepOriginals = $0 }))
-                .disabled(model.settings.mode == .burst)
-            Text("Originals are kept in Files → On My iPhone → MacroStack → Stacks. A stack can use tens of megabytes.")
-                .font(.caption).foregroundStyle(.secondary)
-            Toggle("Composition grid", isOn: $model.settings.showGrid)
+                Button { model.suspend(); showProjects = true } label: {
+                    VStack(spacing: 5) { Image(systemName: "square.stack").font(.title3); Text("Projects").font(.caption2) }
+                        .frame(width: 76, height: 64)
+                }.accessibilityIdentifier("projectsButton").disabled(model.controlsLocked)
+                Spacer(minLength: 10)
+                Button {
+                    if model.isBusy { model.cancel() } else { rangeStep = 0; model.capture() }
+                } label: {
+                    ZStack {
+                        Circle().stroke(.white.opacity(0.9), lineWidth: 3).frame(width: 76, height: 76)
+                        if model.isBusy { RoundedRectangle(cornerRadius: 6).fill(accent).frame(width: 26, height: 26) }
+                        else { Circle().fill(accent).frame(width: 62, height: 62) }
+                    }.frame(width: 84, height: 84)
+                }
+                .accessibilityLabel(model.isBusy ? "Cancel capture" : (model.settings.mode == .single ? "Take photo" : "Capture \(model.settings.totalFrames) photos"))
+                .accessibilityIdentifier("shutterButton")
+                .disabled(!model.isBusy && (!model.isReady || model.controlsLocked))
+                Spacer(minLength: 10)
+                Button {
+                    if model.settings.mode.sweepsFocus { rangeStep = rangeStep == 0 ? 1 : 0 }
+                    else { model.autofocus() }
+                } label: {
+                    VStack(spacing: 5) {
+                        Image(systemName: "viewfinder").font(.title3)
+                        Text(model.settings.mode.sweepsFocus ? "Focus range" : "Focus").font(.caption2)
+                    }.frame(width: 76, height: 64)
+                }.disabled(!model.isReady || model.controlsLocked || !model.canStackFocus)
+            }.foregroundStyle(.white)
         }
-        .font(.subheadline)
-        .tint(accent)
+        .frame(minHeight: 116)
     }
 
-    private func focusControl(title: String, value: Binding<Float>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(String(format: "%.2f", value.wrappedValue)).monospacedDigit().foregroundStyle(.secondary)
-                Button("Preview") { model.previewFocus(value.wrappedValue) }
-                    .disabled(!model.isReady || model.isAdjusting)
-            }
-            Slider(value: value, in: 0...1, onEditingChanged: { editing in
-                if !editing { model.previewFocus(value.wrappedValue) }
-            })
-        }
-    }
-
-    private var help: some View {
-        NavigationStack {
-            List {
-                Section("Your first stack") {
-                    Text("1. Choose a still subject, such as a coin or a leaf indoors. Support the phone and add soft, steady light.")
-                    Text("2. Start a few centimetres away. The Ultra Wide camera stays selected for the entire capture.")
-                    Text("3. Leave Automatic focus setup on and tap your subject. Start with Shallow depth for fine details. Autofocus is repeated after the timer, and the sweep starts at that focus position.")
-                    Text("4. Choose Still insect: 9 narrow focus positions, one photo per position, Full resolution and a two-second timer. Photos are captured first, then processed. Try Both only if noise is the main issue and everything remains motionless.")
-                    Text("5. Pinch or double tap the result to inspect detail. Switch between Stack and Best single without losing your zoom. Save whichever looks better.")
-                }
-                Section("Modes") {
-                    Text("Both averages repeated photos at each focus position, then combines the sharper regions.")
-                    Text("Focus captures one photo per position. Noise averages several photos at the single focus position you choose.")
-                    Text("Single takes one photo without stacking. Use it for moving subjects or to compare capture quality.")
-                    Text("Moving insect selects Burst with 5 photos and a 1/500-second shutter. Continuous autofocus adjusts around the tapped area. Add steady light, keep the insect inside the yellow box, and review each original. Shorter shutter speeds cannot guarantee sharp wings or fast flight.")
-                }
-                Section("Prototype limits") {
-                    Text("Perspective alignment corrects small shifts, rotations and focus breathing when enough shared detail is visible. Strong perspective changes, moving subjects and overlapping surfaces can still cause artifacts. Narrow the focus sweep if alignment fails.")
-                    Text("Very soft repeated frames are excluded from averaging. Disagreeing pixels receive less averaging to reduce ghosting; this does not make moving subjects safe to stack.")
-                    Text("Processing uses normal camera photos, not RAW. A stack is not guaranteed to beat Apple's Camera processing. Compare results on your own subjects.")
-                    Text("Photos are processed on this iPhone. No account or internet connection is needed to take and stack photos.")
-                }
-                Section("Projects and versions") {
-                    Text("Open Projects from the stacked-squares button. Reopen previous captures, inspect originals, exclude moved or blurred frames and re-stack into a separate result. Keep originals enabled when capturing.")
-                    Text("Detail sharpening and JPEG/HEIC export create separate files. Set detail to 0% for format conversion alone. This is conventional sharpening, not neural reconstruction or added optical detail.")
-                    Text("Hold the comparison label in Projects to show the original result. Earlier captures are supported when their original files and settings remain available.")
-                }
-            }
-            .navigationTitle("Getting started")
-            .toolbar { Button("Done") { showHelp = false } }
-        }
+    private var captureHint: String {
+        if model.isAdjusting { return "Focusing…" }
+        if !model.isReady { return "Camera preview appears here when available" }
+        if rangeStep > 0 { return "Tap the subject, wait for focus, then set the point" }
+        if model.settings.mode == .burst { return "Moving · \(model.settings.burstCount) photos · 1/\(model.settings.shutterDenominator) s" }
+        if model.settings.mode == .single { return "One photo · Tap to focus" }
+        return "\(model.settings.totalFrames) photos · \(model.settings.automaticFocus ? "Auto focus range" : "Custom focus range") · Hold still"
     }
 }
 
@@ -250,34 +274,39 @@ private struct ResultView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
+            VStack(spacing: 14) {
+                if result.mode != .single {
                     Picker("Comparison", selection: $showReference) {
                         Text("Stack").tag(false)
                         Text("Best single").tag(true)
                     }.pickerStyle(.segmented)
-                    ZoomablePhoto(image: showReference ? result.reference : result.image)
-                        .frame(height: 440).clipShape(RoundedRectangle(cornerRadius: 16))
-                    Text("Pinch to zoom · double tap for detail").font(.caption).foregroundStyle(.secondary)
-                    Text("\(result.frames) photos · \(result.positions) focus positions · \(Int(result.image.size.width)) × \(Int(result.image.size.height)) px")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("Best single is chosen by detail in the yellow subject box. Both views use the same aligned crop; compare at the same zoom and save the one you prefer.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text(result.captureNotes).font(.caption).foregroundStyle(.secondary)
-                    if result.rejected > 0 { Text("\(result.rejected) softer photos excluded from averaging.").font(.caption) }
-                    if result.fallbacks > 0 { Text("\(result.fallbacks) photos used simpler alignment. Check edges carefully.").font(.caption).foregroundStyle(.orange) }
-                    Button(savedSelections.contains(showReference) ? "Saved to Photos" : (saving ? "Saving…" : (showReference ? "Save best single to Photos" : "Save stack to Photos"))) { save() }
+                }
+                ZoomablePhoto(image: showReference ? result.reference : result.image)
+                    .frame(maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                Text("Pinch to zoom · double tap for detail").font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 16) {
+                    Button(savedSelections.contains(showReference) ? "Saved" : (saving ? "Saving…" : "Save to Photos")) { save() }
                         .buttonStyle(.borderedProminent).disabled(saving || savedSelections.contains(showReference))
                     ShareLink(item: showReference ? result.referenceURL : result.url) {
-                        Label(showReference ? "Share best single" : "Share stack", systemImage: "square.and.arrow.up")
-                    }
-                    Text(result.originalsSaved ? "The original camera photos and both results are saved in Files → On My iPhone → MacroStack → Stacks." : "Both results are saved in Files → On My iPhone → MacroStack → Stacks.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("After Done, open Projects to inspect source frames, re-stack or create a separate detail-enhanced version.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }.padding()
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }.buttonStyle(.bordered)
+                }.controlSize(.large)
+                DisclosureGroup("Photo details") {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("\(result.frames) photos · \(Int(result.image.size.width)) × \(Int(result.image.size.height)) px")
+                            Text(result.captureNotes)
+                            if result.rejected > 0 { Text("\(result.rejected) softer photos excluded.") }
+                            if result.fallbacks > 0 { Text("\(result.fallbacks) photos used simpler alignment. Check edges carefully.") }
+                            Text("Saved in Projects. Close this photo to inspect originals, re-stack, or adjust detail there.")
+                        }.font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(maxHeight: 120)
+                }.font(.subheadline)
             }
-            .navigationTitle("Your stack")
+            .padding()
+            .navigationTitle(result.mode == .single ? "Your photo" : "Your stack")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { Button("Done") { dismiss() } }
             .alert("Could not save", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK") { errorMessage = nil }
