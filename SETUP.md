@@ -4,18 +4,19 @@ The free route uses **your Windows PC + GitHub's cloud Mac + your iPhone**. A re
 
 This assumes you can connect your iPhone to the Windows PC. If you literally only have access to the iPhone and cannot use a computer, this particular installation route is not available.
 
-The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.4 adds live brackets, capture priority, 20-position sweeps, Projects, selective re-stacking, separate detail versions and JPEG/HEIC export. All 26 simulator tests and the iPhone Release build passed in [run 38098160538](https://github.com/cherifbmz/macrostack/actions/runs/38098160538). The verified installer is `build/MacroStack-0.4.0-unsigned.ipa`. Steps 1 and 2 are retained for rebuilding or making your own copy.
+The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.5 simplifies the camera screen and adds available rear/front camera selection plus continuous flashlight controls. All 33 automated tests and the iPhone Release build passed in [run 38142362284](https://github.com/cherifbmz/macrostack/actions/runs/38142362284). The verified installer is `build/MacroStack-0.5.0-unsigned.ipa`. Steps 1 and 2 are retained for rebuilding or making your own copy.
 
 ## Updating your existing installation
 
 1. Save any important existing results to Photos or Files.
-2. Transfer the new `MacroStack-0.4.0-unsigned.ipa` to your iPhone's Files app.
+2. Transfer the new `MacroStack-0.5.0-unsigned.ipa` to your iPhone's Files app.
 3. Keep AltServer running on the Windows PC and connect the phone using your existing working setup.
 4. In AltStore Classic, open **My Apps → +**, select the new IPA and use the same Apple ID as before. Keep the existing MacroStack app installed; the new build uses the same app identifier.
-5. Open MacroStack and choose **Still insect** for your supported phone and stationary subject. Tap the insect's eye; use the preview magnifier to inspect focus. The preset captures nine photos across a narrow focus range before processing them.
-6. For movement, choose **Moving insect**: five individual photos at a requested 1/500-second shutter, continuous autofocus, no timer and no blending. Use bright steady light, keep the insect in the yellow box and review every frame before saving your favorite original.
-7. For precise still-subject focus, tap the nearest detail and **Set Near**, then the farthest detail and **Set Far**. Preview each end; choose up to 20 focus positions and your capture priority.
-8. Open **Projects** using the stacked-squares button to inspect saved originals, exclude bad frames, re-stack and create separate detail/export versions. Keep original camera photos enabled when capturing if you want to re-stack later.
+5. Choose **0.5×** for close insects, **1×** for Main, **Tele** for the telephoto lens, or **Front**. The buttons show only cameras available on your phone. Main and Tele require more distance from the subject.
+6. Choose **Still** for a supported phone and motionless insect. Tap the subject and press the round shutter. **Moving** captures individual photos to review; **Photo** takes one image. Unsupported modes are disabled on lenses without the required focus/exposure controls.
+7. Tap the top **flashlight icon** for continuous light. Open **Capture settings** using the sliders icon to set its strength, capture timer, quality and other options. The light switches off when capture finishes or you leave the camera.
+8. For precise still-subject focus, tap **Focus range**, tap the closest detail, and **Set near point**. Tap the farthest detail and **Set far point**. Preview each end, then Done and capture.
+9. Open **Projects** at the bottom left to inspect saved originals, exclude bad frames, re-stack and create separate detail/export versions. Keep originals enabled under **Capture settings → Advanced** if you want to re-stack later.
 
 This remains a free personal installation with the same periodic refresh requirement. Rebuilding the app does not remove that requirement.
 
@@ -74,7 +75,7 @@ Enter credentials only into the relevant Apple/AltStore authentication flow. No 
 2. Keep AltServer running on the PC, with the phone connected by USB or reachable using the supported Wi-Fi sync setup.
 3. On the iPhone, open AltStore Classic → **My Apps** → **+** and select the IPA.
 4. Wait for signing and installation, then open MacroStack and allow camera access.
-5. Follow **Getting started** in the app. Leave Full resolution on for detail; Standard trades detail for lower memory use and faster processing.
+5. Read the **Quick guide** in Capture settings. Leave Full resolution on for detail; Standard trades detail for lower memory use and faster processing.
 
 ## 5. Keep the free install working
 

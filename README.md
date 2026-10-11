@@ -2,15 +2,15 @@
 
 A native iOS camera prototype for the iPhone 13 Pro Max. It combines **focus stacking** and **multi-frame noise reduction**, with processing on the phone.
 
-**Version 0.4:** adds live focus brackets, capture priority, 20-position sweeps, a project gallery, selective re-stacking, separate detail versions and JPEG/HEIC export. All 26 simulator tests and the iPhone Release build passed. The IPA needs local signing through AltStore. Simulator tests cannot establish real-camera quality; compare results on your iPhone before relying on a stack.
+**Version 0.5:** a redesigned camera screen with a fixed shutter, Still / Moving / Photo modes, available rear and front cameras, and an adjustable continuous flashlight. Advanced settings live in a separate sheet. All 30 unit/image tests, three UI navigation tests and the iPhone Release build passed. Simulator screenshots were inspected. The IPA needs local signing through AltStore. Simulator tests cannot establish real-camera quality; compare results on your iPhone before relying on a stack.
 
 Start with [SETUP.md](SETUP.md) to build and install without owning a Mac.
 
-Requires **iOS 16 or later** and an Ultra Wide camera that exposes manual focus. The intended first test device is your iPhone 13 Pro Max.
+Requires **iOS 16 or later**. Focus stacking requires a camera that exposes manual lens positioning. Photo and Noise modes can use fixed-focus cameras. The intended first test device is your iPhone 13 Pro Max.
 
 ## What is implemented
 
-- Direct selection of the physical Ultra Wide macro camera, with a manual-focus capability check.
+- Selection of available physical Ultra Wide, Main, Telephoto and Front cameras. Ultra Wide is preferred at startup. Focus-stack and manual-shutter capabilities are checked for each camera.
 - Tap-to-focus and automatic focus setup before each capture. Focus sweeps start at the focused subject, with Shallow/Medium/Deep ranges. These are lens-position ranges, not measured subject depth.
 - Optional manual near/far focus controls and live endpoint previews.
 - Focus mode: one photo at each focus position.
@@ -34,6 +34,20 @@ Requires **iOS 16 or later** and an Ultra Wide camera that exposes manual focus.
 - Save or share either the stack or comparison photo. Original HEIC/JPEG camera files are retained by default without recompression.
 - Cancellation, background capture shutdown, permission handling, and capture/focus timeouts.
 
+## Version 0.5: simpler camera and lighting
+
+- The camera screen keeps the preview, lens selector, three modes, shutter, Projects and Focus range on one screen. Detailed options move to Capture settings; lower-level processing controls are under Advanced.
+- Still selects the stationary-insect focus-stack preset; Moving selects individual burst photos; Photo takes a single photo. These controls replace the old long scrolling form.
+- Lens buttons select physical cameras: **0.5×**, **1×**, **Tele**, and **Front** when present. Tele is the native telephoto lens, not digital zoom. Switching resets the focus range and tap location and turns the light off. Unsupported capture modes fall back to Photo; unavailable controls are disabled.
+- The front preview and saved photos use the same unmirrored orientation. Front cameras without manual lens positioning cannot sweep focus, but can capture Photo or Noise; Moving requires custom exposure support.
+- The top **Flashlight** button provides continuous illumination for composing and capture. Choose Low, Medium or High in Capture settings. Availability is checked at runtime; the front camera has no rear-facing torch. Light turns off after the capture sequence, on errors/cancellation, when changing cameras, opening Projects/results, or backgrounding the app. This is continuous torch illumination, not a per-photo flash or a simulated front screen flash.
+- **Focus range** guides you through tapping and setting the nearest and farthest details, with endpoint previews. Closing the guide with × restores automatic range; Done preserves the manual range.
+- The result screen prioritizes the photograph, comparison, Save and Share. Capture metadata is under Photo details. Projects retains its re-stacking and version tools.
+
+Use 0.5× for very close insect work on iPhone 13 Pro Max. Main and Tele need more working distance; adding lens switching does not give every lens macro focusing. Choose Photo for an easy single-camera comparison.
+
+Camera discovery follows [Apple's capture-device API](https://developer.apple.com/documentation/avfoundation/choosing-a-capture-device). Light controls check both hardware and current availability as described in [Apple's torch documentation](https://developer.apple.com/documentation/avfoundation/avcapturedevice/hastorch). Manual lens positions are reset on camera changes because they do not represent consistent distances across lenses.
+
 ## Version 0.4: capture and project tools
 
 The workflow was informed by the published [Zeus Focus Stacking feature list](https://zeusfocusstacking.com/) and [App Store description](https://apps.apple.com/us/app/zeus-focus-stacking/id6471365204), reviewed October 11, 2026. This is an independent implementation; it does not use Zeus code, calibration profiles, assets or neural models. There is no measured evidence that MacroStack produces better photographs than Zeus.
@@ -53,15 +67,15 @@ Neural super resolution, depth-aware adaptive bracketing, model-specific lens ca
 ### Set an exact subject range
 
 1. Keep the phone supported. Tap the nearest insect detail and wait for focus to settle.
-2. Press **Set Near**. Tap the farthest detail that should be sharp and press **Set Far**.
-3. Check **Near ▶** and **Far ▶**. Adjust the manual sliders if autofocus chose the background.
+2. Open **Focus range**, press **Set near point**, then tap the farthest detail that should be sharp and press **Set far point**.
+3. Check **Preview near** and **Preview far**, then Done. Advanced settings also include manual sliders.
 4. Use 10–20 positions for closer spacing through a deep subject, with Quality capture. More frames take longer and cannot repair movement.
 
 The original automatic Shallow/Medium/Deep ranges and insect presets remain available. Set Near/Far switches to manual endpoints so subsequent taps do not overwrite a bracket you already marked.
 
 ### Inspect and re-stack a saved project
 
-Open the stacked-squares **Projects** button after closing the capture result. Select a project, inspect its original frames, deselect unwanted frames, and choose **Re-stack selected frames**. A new Restack result, a matching Reference photo and a JSON recipe are written alongside the initial result; the initial result and excluded source photos are preserved. A single remaining frame is allowed but cannot extend depth of field. Burst projects remain individual photos and are not offered focus re-stacking.
+Open the **Projects** button after closing the capture result. Select a project, inspect its original frames, deselect unwanted frames, and choose **Re-stack selected frames**. A new Restack result, a matching Reference photo and a JSON recipe are written alongside the initial result; the initial result and excluded source photos are preserved. A single remaining frame is allowed but cannot extend depth of field. Burst projects remain individual photos and are not offered focus re-stacking.
 
 For a separate detail/export version, choose a version, set the detail amount and JPEG/HEIC format, then Create new version. Use 0% detail for conversion alone, and start from Original result for independent sharpening comparisons. The detail pass emphasizes existing edges; it does not reconstruct missing insect detail and can amplify halos or noise. Versions with different alignment crops may not match at the same zoom.
 
@@ -70,11 +84,11 @@ For a separate detail/export version, choose a version, set the detail amount an
 1. Support the phone on a tripod or another stable surface. Choose a stationary subject with visible texture and soft, steady light.
 2. Open the app, allow camera access, and start a few centimetres from the subject.
 3. Leave **Automatic focus setup** enabled and tap the subject in the preview.
-4. Select **Still insect**. This selects Focus, Shallow, 9 focus positions, one photo per position, Full resolution and the two-second timer. Try Both only if noise is the main problem and both phone and insect stay still.
+4. Select **Still**. This selects Focus, Shallow, 9 focus positions, one photo per position, Full resolution and the two-second timer. Try Both only if noise is the main problem and both phone and insect stay still.
 5. Capture without moving the phone and keep the app open. After the timer, autofocus and metering settle, exposure/white balance lock, and the focus sweep begins at the subject's focus.
 6. Pinch or double tap the result to inspect. Switch between Stack and Best single at the same zoom. Save whichever looks better. Try a deeper sweep only if details remain out of focus.
 
-The startup Still insect preset captures 9 photos. Full-size processing can take tens of seconds after capture. For a moving insect, choose **Moving insect**, tap its eye, keep it inside the yellow box and use bright steady light. Review the burst originals rather than stacking them. The faster shutter may increase noise or underexpose in poor light and cannot guarantee sharp wings or fast flight.
+The startup Still insect preset captures 9 photos. Full-size processing can take tens of seconds after capture. For a moving insect, choose **Moving**, tap its eye, keep it inside the yellow box and use bright steady light. Review the burst originals rather than stacking them. The faster shutter may increase noise or underexpose in poor light and cannot guarantee sharp wings or fast flight.
 
 ## Quality limits
 
@@ -98,7 +112,9 @@ GitHub builds compile the source code. No captured photos or Apple ID credential
 
 | File | Purpose |
 | --- | --- |
-| `MacroStack/CameraService.swift` | AVFoundation session, focus, exposure locks, still capture |
+| `MacroStack/CameraService.swift` | Camera discovery/switching, torch, focus, exposure locks, still capture |
+| `MacroStack/CameraChoice.swift` | Camera capability checks and simplified shooting modes |
+| `MacroStack/CaptureSettingsView.swift` | Capture settings and advanced controls |
 | `MacroStack/StackEngine.swift` | Alignment, denoising, focus fusion, cropping |
 | `MacroStack/ImageAlignment.swift` | Perspective warp validation and conservative crop |
 | `MacroStack/CaptureArchive.swift` | Original camera files, metadata, and JPEG results |
@@ -115,6 +131,11 @@ GitHub builds compile the source code. No captured photos or Apple ID credential
 | `.github/workflows/ios.yml` | Cloud tests, device build, unsigned IPA artifact |
 
 ## Verification
+
+Version 0.5 passed 30 unit/image tests and three UI navigation tests with zero failures in [run 38142362284](https://github.com/cherifbmz/macrostack/actions/runs/38142362284), from source commit `2f75e242c9400a511784201b12064b76f11f3d73`. The iPhone Release build succeeded. The downloaded IPA was checked for archive integrity, an iPhoneOS executable, bundle `com.personal.macrostack`, version `0.5.0`, build `5`, and minimum iOS `16.0`. SHA-256: `5f6f67995d3f03083a5021fdade8255cb78d4105bdc34cc96a6219e81a9d98db`.
+
+The new tests cover camera capabilities, reachable camera controls, settings navigation and Projects navigation. Screenshots of the camera, settings and empty Projects screens were inspected on the iPhone SE (3rd generation) simulator. Controls fit without scrolling on the camera screen; settings scroll separately. The camera screen screenshot has no live camera or lens selector because the simulator has no camera hardware. UI tests run without camera hardware; their screenshots verify layout and navigation, not lens operation. Physical switching, front-camera focus behavior, torch brightness/thermal availability, orientation and actual photograph quality must be verified on the iPhone.
+
 
 Version 0.4 passed all 26 simulator tests with zero failures, including HEIC export, and the iPhone Release build in [run 38098160538](https://github.com/cherifbmz/macrostack/actions/runs/38098160538), from source commit `7807bcc043e9a87e764dac04c63d03f274c2fbf4`. The downloaded IPA was checked for archive integrity, an iPhoneOS executable, bundle identifier `com.personal.macrostack`, version `0.4.0`, build `4`, and minimum iOS `16.0`. Its SHA-256 is `50321470a82780d81053e2f66ec4596c4f2147fcee19b240beee0937519716a7`.
 
@@ -134,7 +155,9 @@ On the phone, verify:
 - The yellow subject box follows taps correctly with preview magnification on and off.
 - Moving insect burst uses the requested shutter (check the per-photo EXIF readout), continuous autofocus is useful, and the original selected in review is the one saved/shared.
 - A burst's actual capture cadence is acceptable, and bright/low-light examples establish how much detail the shutter/ISO tradeoff preserves.
-- Mark and preview Near/Far on two parts of an insect; verify a later tap does not change an already marked manual endpoint.
+- Use Focus range to mark and preview Near/Far on two parts of an insect; verify a later tap does not change an already marked manual endpoint.
+- Switch 0.5×, 1×, Tele and Front; check preview orientation against the saved photo and verify unsupported modes are disabled.
+- Try Low/Medium/High flashlight; verify off after capture, camera switching, opening Projects/results, and backgrounding. Verify unavailable/thermal states do not leave the UI claiming the light is on.
 - Open old and new projects, inspect originals, exclude a frame, re-stack, and verify the first result remains available.
 - Create detail versions at 0% and a moderate amount; compare, save and share JPEG/HEIC outputs at expected dimensions.
 - Full-resolution output dimensions, capture time, memory behavior, and thermal behavior are acceptable.
