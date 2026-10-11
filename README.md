@@ -2,7 +2,7 @@
 
 A native iOS camera prototype for the iPhone 13 Pro Max. It combines **focus stacking** and **multi-frame noise reduction**, with processing on the phone.
 
-**Version 0.3:** adds separate still-insect and moving-insect workflows. [All 19 simulator tests and the iPhone Release build passed](https://github.com/cherifbmz/macrostack/actions/runs/38096927648). The IPA needs local signing through AltStore. Simulator tests cannot establish real-camera quality; compare results on your iPhone before relying on a stack.
+**Version 0.4:** adds live focus brackets, capture priority, 20-position sweeps, a project gallery, selective re-stacking, separate detail versions and JPEG/HEIC export. All 26 simulator tests and the iPhone Release build passed. The IPA needs local signing through AltStore. Simulator tests cannot establish real-camera quality; compare results on your iPhone before relying on a stack.
 
 Start with [SETUP.md](SETUP.md) to build and install without owning a Mac.
 
@@ -33,6 +33,37 @@ Requires **iOS 16 or later** and an Ultra Wide camera that exposes manual focus.
 - Burst never registers, averages, fuses or alignment-crops images. Review every original, override the suggested sharpest photo, and save/share the original camera file. Exposure and ISO from its EXIF metadata are shown when available.
 - Save or share either the stack or comparison photo. Original HEIC/JPEG camera files are retained by default without recompression.
 - Cancellation, background capture shutdown, permission handling, and capture/focus timeouts.
+
+## Version 0.4: capture and project tools
+
+The workflow was informed by the published [Zeus Focus Stacking feature list](https://zeusfocusstacking.com/) and [App Store description](https://apps.apple.com/us/app/zeus-focus-stacking/id6471365204), reviewed October 11, 2026. This is an independent implementation; it does not use Zeus code, calibration profiles, assets or neural models. There is no measured evidence that MacroStack produces better photographs than Zeus.
+
+| Workflow | MacroStack 0.4 |
+| --- | --- |
+| Live focus brackets | Tap the nearest detail, Set Near; tap the farthest detail, Set Far. Preview either endpoint before capture. |
+| Frame spacing | 3–20 focus positions; Even or Near dense. Both are lens-position distributions, not a measured depth map. |
+| Capture priority | Speed, Balanced or Quality at the same selected output resolution. Moving insect burst always uses Speed to respect its shutter setting. |
+| Project gallery | Reopen saved results and retained originals, including compatible older captures and incomplete projects. |
+| Selective re-stacking | Inspect originals, exclude frames, choose alignment/motion protection/resolution, and save a new stack with a processing recipe. Original capture groups are retained even when frames are excluded. |
+| Separate detail versions | Adjustable conventional unsharp-mask detail, with source preserved and an edit recipe. Hold to compare with the original result. |
+| Export | JPEG and HEIC for separate versions; HEIC requires an available device encoder. Save to Photos or share. |
+
+Neural super resolution, depth-aware adaptive bracketing, model-specific lens calibration, automatic iCloud sync, landscape capture and 48 MP capture are not implemented. The iPhone 13 Pro Max has [12 MP cameras](https://support.apple.com/en-us/111870); upscaling would not turn that hardware into a 48 MP camera. Original files can still be shared to a destination of your choice through iOS.
+
+### Set an exact subject range
+
+1. Keep the phone supported. Tap the nearest insect detail and wait for focus to settle.
+2. Press **Set Near**. Tap the farthest detail that should be sharp and press **Set Far**.
+3. Check **Near ▶** and **Far ▶**. Adjust the manual sliders if autofocus chose the background.
+4. Use 10–20 positions for closer spacing through a deep subject, with Quality capture. More frames take longer and cannot repair movement.
+
+The original automatic Shallow/Medium/Deep ranges and insect presets remain available. Set Near/Far switches to manual endpoints so subsequent taps do not overwrite a bracket you already marked.
+
+### Inspect and re-stack a saved project
+
+Open the stacked-squares **Projects** button after closing the capture result. Select a project, inspect its original frames, deselect unwanted frames, and choose **Re-stack selected frames**. A new Restack result, a matching Reference photo and a JSON recipe are written alongside the initial result; the initial result and excluded source photos are preserved. A single remaining frame is allowed but cannot extend depth of field. Burst projects remain individual photos and are not offered focus re-stacking.
+
+For a separate detail/export version, choose a version, set the detail amount and JPEG/HEIC format, then Create new version. Use 0% detail for conversion alone, and start from Original result for independent sharpening comparisons. The detail pass emphasizes existing edges; it does not reconstruct missing insect detail and can amplify halos or noise. Versions with different alignment crops may not match at the same zoom.
 
 ## First capture
 
@@ -74,6 +105,9 @@ GitHub builds compile the source code. No captured photos or Apple ID credential
 | `MacroStack/ZoomablePhoto.swift` | Zoomable matched comparison |
 | `MacroStack/BurstResultView.swift` | Review, metadata, save/share for original burst frames |
 | `MacroStack/ExposurePlan.swift` | Metering compensation and shutter/ISO limits |
+| `MacroStack/ProjectFiles.swift` | Legacy project loading, grouping, separate versions and export |
+| `MacroStack/ProjectModel.swift` | Selective re-stacking and version creation |
+| `MacroStack/ProjectGalleryView.swift` | Project browser, original-frame inspection and comparison |
 | `MacroStack/CameraModel.swift` | Capture sequence and JPEG output |
 | `MacroStack/ContentView.swift` | Controls, instructions, comparison, saving |
 | `MacroStackTests/StackEngineTests.swift` | Synthetic image tests |
@@ -82,7 +116,9 @@ GitHub builds compile the source code. No captured photos or Apple ID credential
 
 ## Verification
 
-All 19 tests passed on source commit `254913baf5ba1ad79001068827970bf2a91b878b`, followed by a successful iPhone Release build (0.3.0, build 3). The 14 existing tests cover linear-light averaging, noise reduction, focus detail, translation direction, scale/rotation correction, registration-scale conversion, invalid warp rejection, soft-repeat rejection, moving-patch protection, matched comparison size, output sizing, unfinished output, focus ranges, and Single mode defaults. Five new tests cover subject-specific selection, unblended and uncropped bursts, insect presets, ISO compensation/low-light reporting, and hardware limits/invalid metering. The legacy Core Image kernel initializer remains a future migration task. Real-camera behavior and UI interaction on a physical iPhone still need validation.
+Version 0.4 passed all 26 simulator tests with zero failures, including HEIC export, and the iPhone Release build in [run 38098160538](https://github.com/cherifbmz/macrostack/actions/runs/38098160538), from source commit `7807bcc043e9a87e764dac04c63d03f274c2fbf4`. The downloaded IPA was checked for archive integrity, an iPhoneOS executable, bundle identifier `com.personal.macrostack`, version `0.4.0`, build `4`, and minimum iOS `16.0`. Its SHA-256 is `50321470a82780d81053e2f66ec4596c4f2147fcee19b240beee0937519716a7`.
+
+The seven new tests cover legacy settings, 20-position spacing, exclusions without regrouping focus planes, old/incomplete project discovery, preservation of sources and dimensions during version export, HEIC export, and detail adjustment on a flat field. The existing 19 tests cover stacking, registration, burst selection, focus presets and exposure planning. The legacy Core Image kernel initializer remains a future migration task. Real-camera behavior and UI interaction on a physical iPhone still need validation.
 
 Local checks passed for project/workflow YAML parsing, simulator selection with available and unavailable devices, the empty-simulator error, asset JSON, and the icon's size/color format. These checks do not establish that the Swift code compiles or that camera/image processing works on iOS.
 
@@ -98,6 +134,9 @@ On the phone, verify:
 - The yellow subject box follows taps correctly with preview magnification on and off.
 - Moving insect burst uses the requested shutter (check the per-photo EXIF readout), continuous autofocus is useful, and the original selected in review is the one saved/shared.
 - A burst's actual capture cadence is acceptable, and bright/low-light examples establish how much detail the shutter/ISO tradeoff preserves.
+- Mark and preview Near/Far on two parts of an insect; verify a later tap does not change an already marked manual endpoint.
+- Open old and new projects, inspect originals, exclude a frame, re-stack, and verify the first result remains available.
+- Create detail versions at 0% and a moderate amount; compare, save and share JPEG/HEIC outputs at expected dimensions.
 - Full-resolution output dimensions, capture time, memory behavior, and thermal behavior are acceptable.
 
 ## Reference documentation
