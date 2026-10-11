@@ -4,12 +4,12 @@ The free route uses **your Windows PC + GitHub's cloud Mac + your iPhone**. A re
 
 This assumes you can connect your iPhone to the Windows PC. If you literally only have access to the iPhone and cannot use a computer, this particular installation route is not available.
 
-The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.5 simplifies the camera screen and adds available rear/front camera selection plus continuous flashlight controls. All 33 automated tests and the iPhone Release build passed in [run 38142362284](https://github.com/cherifbmz/macrostack/actions/runs/38142362284). The verified installer is `build/MacroStack-0.5.0-unsigned.ipa`. Steps 1 and 2 are retained for rebuilding or making your own copy.
+The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.5.1 fixes the camera preview intercepting taps on the flashlight control. All 37 automated tests and the iPhone Release build passed in [run 38143872062](https://github.com/cherifbmz/macrostack/actions/runs/38143872062). The verified installer is `build/MacroStack-0.5.1-unsigned.ipa`. Steps 1 and 2 are retained for rebuilding or making your own copy.
 
 ## Updating your existing installation
 
 1. Save any important existing results to Photos or Files.
-2. Transfer the new `MacroStack-0.5.0-unsigned.ipa` to your iPhone's Files app.
+2. Transfer the new `MacroStack-0.5.1-unsigned.ipa` to your iPhone's Files app.
 3. Keep AltServer running on the Windows PC and connect the phone using your existing working setup.
 4. In AltStore Classic, open **My Apps → +**, select the new IPA and use the same Apple ID as before. Keep the existing MacroStack app installed; the new build uses the same app identifier.
 5. Choose **0.5×** for close insects, **1×** for Main, **Tele** for the telephoto lens, or **Front**. The buttons show only cameras available on your phone. Main and Tele require more distance from the subject.

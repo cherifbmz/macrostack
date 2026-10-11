@@ -2,7 +2,7 @@
 
 A native iOS camera prototype for the iPhone 13 Pro Max. It combines **focus stacking** and **multi-frame noise reduction**, with processing on the phone.
 
-**Version 0.5:** a redesigned camera screen with a fixed shutter, Still / Moving / Photo modes, available rear and front cameras, and an adjustable continuous flashlight. Advanced settings live in a separate sheet. All 30 unit/image tests, three UI navigation tests and the iPhone Release build passed. Simulator screenshots were inspected. The IPA needs local signing through AltStore. Simulator tests cannot establish real-camera quality; compare results on your iPhone before relying on a stack.
+**Version 0.5.1:** fixes preview touch handling so a magnified camera preview cannot intercept taps on Flashlight or other surrounding controls. The camera screen, lens selection, continuous flashlight and project tools from 0.5 remain available. All 37 automated tests and the iPhone Release build passed. The IPA needs local signing through AltStore.
 
 Start with [SETUP.md](SETUP.md) to build and install without owning a Mac.
 
@@ -33,6 +33,12 @@ Requires **iOS 16 or later**. Focus stacking requires a camera that exposes manu
 - Burst never registers, averages, fuses or alignment-crops images. Review every original, override the suggested sharpest photo, and save/share the original camera file. Exposure and ISO from its EXIF metadata are shown when available.
 - Save or share either the stack or comparison photo. Original HEIC/JPEG camera files are retained by default without recompression.
 - Cancellation, background capture shutdown, permission handling, and capture/focus timeouts.
+
+## Version 0.5.1: flashlight touch fix
+
+The previous preview used a SwiftUI scale transform for 2× inspection. Its enlarged touch area could extend outside the visually clipped viewfinder. The preview now keeps its UIView bounds fixed and enlarges only the video layer inside it. Tap-to-focus converts through that layer's coordinates, and an explicit viewfinder hit shape prevents hits outside the viewport. Flashlight and Settings have full 48-point touch targets; the top controls stay above the preview.
+
+Regression coverage includes UIKit hit-testing and coordinate conversion, plus UI tests that tap the real preview gesture recognizer and the flashlight button at 1× and 2× preview magnification. Tests also cover an unavailable flashlight and the padding around the button. Simulator tests substitute only hardware state/light actions; they do not establish physical LED behavior.
 
 ## Version 0.5: simpler camera and lighting
 
@@ -131,6 +137,9 @@ GitHub builds compile the source code. No captured photos or Apple ID credential
 | `.github/workflows/ios.yml` | Cloud tests, device build, unsigned IPA artifact |
 
 ## Verification
+
+Version 0.5.1 passed 32 unit/image tests and five UI tests with zero failures in [run 38143872062](https://github.com/cherifbmz/macrostack/actions/runs/38143872062), from source commit `b92589639265eaaa694b36ed7922ae3ae13e2906`. The new regression tests verify flashlight toggles do not reach the preview recognizer at normal or 2× magnification, including button padding and an unavailable flashlight. Preview taps and Settings navigation still work. The simulator screenshot was inspected. The iPhone Release build succeeded; downloaded IPA integrity, platform and metadata were verified (0.5.1, build 6). SHA-256: `3c2845a46c840346854ee4f0001257e8086d318c08558d97ee72d01abfca8963`. Physical camera focus and torch behavior still require on-device confirmation.
+
 
 Version 0.5 passed 30 unit/image tests and three UI navigation tests with zero failures in [run 38142362284](https://github.com/cherifbmz/macrostack/actions/runs/38142362284), from source commit `2f75e242c9400a511784201b12064b76f11f3d73`. The iPhone Release build succeeded. The downloaded IPA was checked for archive integrity, an iPhoneOS executable, bundle `com.personal.macrostack`, version `0.5.0`, build `5`, and minimum iOS `16.0`. SHA-256: `5f6f67995d3f03083a5021fdade8255cb78d4105bdc34cc96a6219e81a9d98db`.
 
