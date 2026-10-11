@@ -4,7 +4,7 @@ The free route uses **your Windows PC + GitHub's cloud Mac + your iPhone**. A re
 
 This assumes you can connect your iPhone to the Windows PC. If you literally only have access to the iPhone and cannot use a computer, this particular installation route is not available.
 
-The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.3 adds Still insect and Moving insect presets, subject-area sharpness selection, preview magnification and original burst review. Cloud validation is in progress; use only an installer from a successful run. Steps 1 and 2 are retained for rebuilding or making your own copy.
+The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.3 adds Still insect and Moving insect presets, subject-area sharpness selection, preview magnification and original burst review. [All 19 simulator tests and the iPhone Release build passed](https://github.com/cherifbmz/macrostack/actions/runs/38096927648). The verified local installer is `build/MacroStack-0.3.0-unsigned.ipa`. Steps 1 and 2 are retained for rebuilding or making your own copy.
 
 ## Updating your existing installation
 

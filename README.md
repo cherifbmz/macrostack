@@ -2,7 +2,7 @@
 
 A native iOS camera prototype for the iPhone 13 Pro Max. It combines **focus stacking** and **multi-frame noise reduction**, with processing on the phone.
 
-**Version 0.3:** adds separate still-insect and moving-insect workflows. Its cloud validation is in progress. The IPA needs local signing through AltStore. Simulator tests cannot establish real-camera quality; compare results on your iPhone before relying on a stack.
+**Version 0.3:** adds separate still-insect and moving-insect workflows. [All 19 simulator tests and the iPhone Release build passed](https://github.com/cherifbmz/macrostack/actions/runs/38096927648). The IPA needs local signing through AltStore. Simulator tests cannot establish real-camera quality; compare results on your iPhone before relying on a stack.
 
 Start with [SETUP.md](SETUP.md) to build and install without owning a Mac.
 
@@ -82,7 +82,7 @@ GitHub builds compile the source code. No captured photos or Apple ID credential
 
 ## Verification
 
-Version 0.3 validation is pending. The suite now contains 19 tests. The 14 existing tests cover linear-light averaging, noise reduction, focus detail, translation direction, scale/rotation correction, registration-scale conversion, invalid warp rejection, soft-repeat rejection, moving-patch protection, matched comparison size, output sizing, unfinished output, focus ranges, and Single mode defaults. Five new tests cover subject-specific selection, unblended and uncropped bursts, insect presets, ISO compensation/low-light reporting, and hardware limits/invalid metering. The legacy Core Image kernel initializer remains a future migration task.
+All 19 tests passed on source commit `254913baf5ba1ad79001068827970bf2a91b878b`, followed by a successful iPhone Release build (0.3.0, build 3). The 14 existing tests cover linear-light averaging, noise reduction, focus detail, translation direction, scale/rotation correction, registration-scale conversion, invalid warp rejection, soft-repeat rejection, moving-patch protection, matched comparison size, output sizing, unfinished output, focus ranges, and Single mode defaults. Five new tests cover subject-specific selection, unblended and uncropped bursts, insect presets, ISO compensation/low-light reporting, and hardware limits/invalid metering. The legacy Core Image kernel initializer remains a future migration task. Real-camera behavior and UI interaction on a physical iPhone still need validation.
 
 Local checks passed for project/workflow YAML parsing, simulator selection with available and unavailable devices, the empty-simulator error, asset JSON, and the icon's size/color format. These checks do not establish that the Swift code compiles or that camera/image processing works on iOS.
 
