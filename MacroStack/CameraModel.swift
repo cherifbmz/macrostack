@@ -56,7 +56,7 @@ final class CameraModel: ObservableObject {
             } else { try await camera.focus(at: settings.near) }
             guard foreground else { return }
             isReady = true
-            status = "Tap the subject to focus. Use Single for a quick photo or Both for a still subject."
+            status = "Tap the insect's eye, then choose Still insect or Moving insect."
         } catch is CancellationError { }
         catch { status = "Camera unavailable"; errorMessage = error.localizedDescription }
     }
@@ -93,7 +93,7 @@ final class CameraModel: ObservableObject {
             do {
                 let position = try await camera.autofocus(at: focusPoint)
                 settings.center(on: position)
-                status = "Focus ready. The sweep will start at your subject's focus."
+                status = settings.mode == .burst ? "Focus ready. Keep the insect inside the yellow box during the burst." : "Focus ready. The sweep will start at your subject's focus."
             } catch is CancellationError { }
             catch { errorMessage = error.localizedDescription }
         }

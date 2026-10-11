@@ -4,15 +4,16 @@ The free route uses **your Windows PC + GitHub's cloud Mac + your iPhone**. A re
 
 This assumes you can connect your iPhone to the Windows PC. If you literally only have access to the iPhone and cannot use a computer, this particular installation route is not available.
 
-The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.2 adds automatic focus, full-size output by default, improved alignment and a zoomable comparison. [All 14 tests and the iPhone Release build passed](https://github.com/cherifbmz/macrostack/actions/runs/38094135877). A local installer is available as `build/MacroStack-0.2.0-unsigned.ipa`. Steps 1 and 2 are retained for rebuilding or making your own copy.
+The source is at [cherifbmz/macrostack](https://github.com/cherifbmz/macrostack). Version 0.3 adds Still insect and Moving insect presets, subject-area sharpness selection, preview magnification and original burst review. Cloud validation is in progress; use only an installer from a successful run. Steps 1 and 2 are retained for rebuilding or making your own copy.
 
 ## Updating your existing installation
 
 1. Save any important existing results to Photos or Files.
-2. Transfer the new `MacroStack-0.2.0-unsigned.ipa` to your iPhone's Files app.
+2. Transfer the new `MacroStack-0.3.0-unsigned.ipa` to your iPhone's Files app.
 3. Keep AltServer running on the Windows PC and connect the phone using your existing working setup.
 4. In AltStore Classic, open **My Apps → +**, select the new IPA and use the same Apple ID as before. Keep the existing MacroStack app installed; the new build uses the same app identifier.
-5. Open MacroStack and try **Both → Automatic focus setup → Shallow**, with **Full resolution on**. Tap your subject, then capture with the two-second timer.
+5. Open MacroStack and choose **Still insect** for your supported phone and stationary subject. Tap the insect's eye; use the preview magnifier to inspect focus. The preset captures nine photos across a narrow focus range before processing them.
+6. For movement, choose **Moving insect**: five individual photos at a requested 1/500-second shutter, continuous autofocus, no timer and no blending. Use bright steady light, keep the insect in the yellow box and review every frame before saving your favorite original.
 
 This remains a free personal installation with the same periodic refresh requirement. Rebuilding the app does not remove that requirement.
 
@@ -83,4 +84,4 @@ Save important outputs to Photos or Files. Deleting the app removes its private 
 
 This route avoids buying a Mac and avoids the paid Apple Developer membership for personal testing. The hosted build policy and AltStore restrictions are external services' policies, so follow their current documentation if they change.
 
-Version 0.1 was installed on your iPhone but produced disappointing detail. Version 0.2 targets those issues. Simulator tests cannot verify your camera's focus behavior, capture quality, memory limits, or how well a macro stack compares with Apple's Camera. Use the new Stack/Best single comparison at the same zoom, then compare with Apple's Camera on the same stationary subject and lighting.
+Simulator tests cannot verify your camera's focus behavior, insect detail, shutter behavior, capture cadence, memory limits, or how well a macro stack compares with Apple's Camera. Compare Stack/Best single at the same zoom on a stationary insect. For a burst, inspect fine details in each original and check the displayed shutter/ISO metadata. A sample of an unsatisfactory original is needed to distinguish optical magnification, missed focus, noise, motion blur and fusion artifacts.

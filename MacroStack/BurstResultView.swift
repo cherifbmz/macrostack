@@ -71,7 +71,7 @@ struct BurstResultView: View {
 
     private var selectedURL: URL { result.candidates[selected] }
 
-    private static func load(_ url: URL) throws -> (UIImage, String) {
+    nonisolated private static func load(_ url: URL) throws -> (UIImage, String) {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
