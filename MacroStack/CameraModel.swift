@@ -46,12 +46,28 @@ final class CameraModel: ObservableObject {
     var canUseMoving: Bool { selectedCamera?.supportsCustomExposure ?? false }
     var controlsLocked: Bool { isBusy || isAdjusting || isChangingLight }
 
+    // UI regression tests exercise the real preview view and buttons without camera hardware.
+    // This mode cannot be enabled in a device build.
+    var usesSimulatedPreview: Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        return ProcessInfo.processInfo.arguments.contains("-preview-interaction-testing")
+        #else
+        return false
+        #endif
+    }
+    @Published private(set) var previewTapCount = 0
+    func observePreviewTap() {
+        if usesSimulatedPreview { previewTapCount += 1 }
+    }
+
+
     private func applyHardware(_ state: CameraHardwareState) {
         cameras = state.cameras; selectedCameraID = state.selectedID
         torchAvailable = state.torchAvailable; torchLevel = state.torchLevel
     }
 
     func refreshHardware() async {
+        if usesSimulatedPreview { return }
         guard isReady, !isAdjusting, !isChangingLight else { return }
         applyHardware(await camera.hardwareState())
     }
@@ -98,6 +114,7 @@ final class CameraModel: ObservableObject {
 
     func setLight(_ level: Float) {
         guard isReady, !controlsLocked else { return }
+        if usesSimulatedPreview { torchLevel = level; return }
         isChangingLight = true
         Task {
             defer { isChangingLight = false }
@@ -122,6 +139,12 @@ final class CameraModel: ObservableObject {
         #if targetEnvironment(simulator)
         if ProcessInfo.processInfo.arguments.contains("-ui-testing") {
             status = "Camera preview requires a physical iPhone."
+            if usesSimulatedPreview {
+                let fixture = CameraChoice(id: "preview-fixture", title: "0.5×", subtitle: "Simulator preview",
+                    supportsFocusStack: true, supportsCustomExposure: true, hasTorch: true)
+                applyHardware(CameraHardwareState(cameras: [fixture], selectedID: fixture.id, torchAvailable: !ProcessInfo.processInfo.arguments.contains("-torch-unavailable-testing"), torchLevel: 0))
+                isReady = true
+            }
             return
         }
         #endif
@@ -164,6 +187,7 @@ final class CameraModel: ObservableObject {
     }
 
     func autofocus(at point: CGPoint? = nil, imagePoint: CGPoint? = nil) {
+        if usesSimulatedPreview { return }
         guard isReady, !controlsLocked else { return }
         if let point { focusPoint = point }
         if let imagePoint {

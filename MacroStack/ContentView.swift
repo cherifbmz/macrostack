@@ -13,7 +13,7 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 10) {
-                topBar
+                topBar.zIndex(1)
                 viewfinder
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .layoutPriority(1)
@@ -67,13 +67,14 @@ struct ContentView: View {
                 Image(systemName: model.torchLevel > 0 ? "flashlight.on.fill" : "flashlight.off.fill")
                     .foregroundStyle(model.torchLevel > 0 ? accent : .white)
                     .frame(width: 48, height: 48)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("Flashlight")
             .accessibilityValue(model.torchLevel > 0 ? "On" : (model.torchAvailable ? "Off" : "Unavailable"))
             .accessibilityIdentifier("flashlightButton")
             .disabled(!model.isReady || model.controlsLocked || (!model.torchAvailable && model.torchLevel == 0))
             Button { showSettings = true } label: {
-                Image(systemName: "slider.horizontal.3").frame(width: 48, height: 48)
+                Image(systemName: "slider.horizontal.3").frame(width: 48, height: 48).contentShape(Rectangle())
             }
             .accessibilityLabel("Capture settings").accessibilityIdentifier("settingsButton")
             .disabled(model.controlsLocked)
@@ -86,10 +87,14 @@ struct ContentView: View {
             ZStack {
                 Color(white: 0.075)
                 if model.isReady {
-                    CameraPreview(session: model.camera.session, onFocus: { model.autofocus(at: $0, imagePoint: $1) })
+                    CameraPreview(session: model.camera.session, magnification: previewMagnified ? 2 : 1,
+                                  focusEnabled: !model.controlsLocked, onTapObserved: model.observePreviewTap,
+                                  onFocus: { model.autofocus(at: $0, imagePoint: $1) })
                         .frame(width: width, height: width * 4 / 3)
-                        .overlay { compositionOverlay }
-                        .scaleEffect(previewMagnified ? 2 : 1)
+                        .accessibilityElement()
+                        .accessibilityLabel("Camera preview")
+                        .accessibilityIdentifier("cameraPreview")
+                        .overlay { compositionOverlay.scaleEffect(previewMagnified ? 2 : 1) }
                 } else {
                     VStack(spacing: 14) {
                         Image(systemName: "camera.macro").font(.system(size: 42, weight: .light)).foregroundStyle(accent)
@@ -102,6 +107,7 @@ struct ContentView: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipped()
+            .contentShape(Rectangle())
             .overlay(alignment: .topLeading) {
                 if model.isReady {
                     Text(model.selectedCamera?.subtitle ?? "Camera")
@@ -114,8 +120,9 @@ struct ContentView: View {
                 if model.isReady {
                     Button { previewMagnified.toggle() } label: {
                         Image(systemName: previewMagnified ? "minus.magnifyingglass" : "plus.magnifyingglass")
-                            .frame(width: 44, height: 44).background(.black.opacity(0.55), in: Circle())
+                            .frame(width: 44, height: 44).background(.black.opacity(0.55), in: Circle()).contentShape(Rectangle())
                     }
+                    .accessibilityIdentifier("magnifyPreviewButton")
                     .accessibilityLabel(previewMagnified ? "Normal preview" : "Magnify preview only")
                     .padding(10).disabled(model.isBusy)
                 }
@@ -255,6 +262,7 @@ struct ContentView: View {
     }
 
     private var captureHint: String {
+        if model.usesSimulatedPreview { return "Preview test · Focus taps: \(model.previewTapCount)" }
         if model.isAdjusting { return "Focusing…" }
         if !model.isReady { return "Camera preview appears here when available" }
         if rangeStep > 0 { return "Tap the subject, wait for focus, then set the point" }
