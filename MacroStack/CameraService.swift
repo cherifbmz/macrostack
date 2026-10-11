@@ -232,7 +232,7 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
         continuation.resume(with: result)
     }
 
-    func photo(prioritizeSpeed: Bool = false) async throws -> Data {
+    func photo(quality: CaptureQuality = .quality) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 guard self.session.isRunning, self.photoContinuation == nil else {
@@ -243,7 +243,11 @@ final class CameraService: NSObject, AVCapturePhotoCaptureDelegate, @unchecked S
                 let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: codec])
                 settings.maxPhotoDimensions = self.output.maxPhotoDimensions
                 // Speed prioritization keeps the explicit burst shutter/ISO settings.
-                settings.photoQualityPrioritization = prioritizeSpeed ? .speed : .quality
+                switch quality {
+                case .speed: settings.photoQualityPrioritization = .speed
+                case .balanced: settings.photoQualityPrioritization = .balanced
+                case .quality: settings.photoQualityPrioritization = .quality
+                }
                 settings.flashMode = .off
                 if let connection = self.output.connection(with: .video), connection.isVideoOrientationSupported {
                     connection.videoOrientation = .portrait

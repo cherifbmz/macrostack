@@ -41,6 +41,7 @@ final class CameraModel: ObservableObject {
     private var starting = false
     private var foreground = true
     private var focusPoint = CGPoint(x: 0.5, y: 0.5)
+    @Published var previewLensPosition: Float = 0.2
 
     func start() async {
         foreground = true
@@ -53,7 +54,8 @@ final class CameraModel: ObservableObject {
             try await camera.setExposureBias(settings.exposureBias)
             if settings.automaticFocus {
                 settings.center(on: try await camera.autofocus(at: focusPoint))
-            } else { try await camera.focus(at: settings.near) }
+                previewLensPosition = settings.focusCenter
+            } else { try await camera.focus(at: settings.near); previewLensPosition = settings.near }
             guard foreground else { return }
             isReady = true
             status = "Tap the insect's eye, then choose Still insect or Moving insect."
@@ -73,7 +75,7 @@ final class CameraModel: ObservableObject {
         isAdjusting = true
         Task {
             defer { isAdjusting = false }
-            do { try await camera.focus(at: position) }
+            do { try await camera.focus(at: position); previewLensPosition = position }
             catch is CancellationError { }
             catch { errorMessage = error.localizedDescription }
         }
@@ -92,7 +94,8 @@ final class CameraModel: ObservableObject {
             defer { isAdjusting = false }
             do {
                 let position = try await camera.autofocus(at: focusPoint)
-                settings.center(on: position)
+                previewLensPosition = position
+                if settings.automaticFocus { settings.center(on: position) }
                 status = settings.mode == .burst ? "Focus ready. Keep the insect inside the yellow box during the burst." : "Focus ready. The sweep will start at your subject's focus."
             } catch is CancellationError { }
             catch { errorMessage = error.localizedDescription }
@@ -106,6 +109,13 @@ final class CameraModel: ObservableObject {
             do { try await camera.setExposureBias(bias) }
             catch { errorMessage = error.localizedDescription }
         }
+    }
+
+    func markEndpoint(near: Bool) {
+        guard isReady, !isBusy, !isAdjusting else { return }
+        settings.automaticFocus = false
+        if near { settings.near = previewLensPosition } else { settings.far = previewLensPosition }
+        status = near ? "Near bracket saved. Tap the farthest detail, then set Far." : "Far bracket saved. Preview both ends before capturing."
     }
 
     func capture() {
@@ -145,7 +155,7 @@ final class CameraModel: ObservableObject {
                                                                           continuousFocus: settings.automaticFocus)
                 } else {
                     try await camera.lockExposure()
-                    exposureNotes = "Quality-prioritized still capture with metered exposure."
+                    exposureNotes = "\(settings.captureQuality.rawValue) capture with metered exposure."
                 }
                 try Task.checkCancellation()
                 var originals: [URL] = []
@@ -162,7 +172,7 @@ final class CameraModel: ObservableObject {
                         status = settings.mode == .burst
                             ? "Burst photo \(repeatIndex + 1)/\(settings.repeats) · \(exposureNotes)"
                             : "Focus \(index + 1)/\(settings.positions.count) · photo \(repeatIndex + 1)/\(settings.repeats)"
-                        let data = try await camera.photo(prioritizeSpeed: settings.mode == .burst)
+                        let data = try await camera.photo(quality: settings.mode == .burst ? .speed : settings.captureQuality)
                         try Task.checkCancellation()
                         let number = captured + 1
                         let lens: Float? = settings.mode == .burst && settings.automaticFocus ? nil : position

@@ -5,6 +5,7 @@ struct ContentView: View {
     @StateObject private var model = CameraModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var showHelp = false
+    @State private var showProjects = false
     @State private var previewMagnified = false
     private let accent = Color(red: 0.66, green: 0.91, blue: 0.48)
 
@@ -47,6 +48,16 @@ struct ContentView: View {
                     Toggle("Magnify preview 2×", isOn: $previewMagnified).font(.caption)
                     Text("Tap the insect's eye. The yellow box marks the area used to judge sharpness. Preview magnification helps check focus; saved photos keep the full view.")
                         .font(.caption).foregroundStyle(.secondary)
+                    if model.settings.mode.sweepsFocus && !model.isBusy {
+                        HStack {
+                            Button("Set Near") { model.markEndpoint(near: true) }
+                            Button("Set Far") { model.markEndpoint(near: false) }
+                            Button("Near ▶") { model.previewFocus(model.settings.near) }
+                            Button("Far ▶") { model.previewFocus(model.settings.far) }
+                        }.font(.caption).buttonStyle(.bordered).disabled(!model.isReady || model.isAdjusting)
+                        Text("Tap the closest detail and Set Near; tap the farthest detail and Set Far. This switches to your manual range.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
 
                     Text(model.status).font(.subheadline).foregroundStyle(.secondary)
                         .accessibilityIdentifier("captureStatus")
@@ -73,13 +84,18 @@ struct ContentView: View {
             }
             .background(Color(white: 0.055))
             .navigationTitle("MacroStack")
-            .toolbar { Button { showHelp = true } label: { Image(systemName: "questionmark.circle") }.accessibilityLabel("Capture instructions") }
+            .toolbar {
+                Button { model.suspend(); showProjects = true } label: { Image(systemName: "square.stack") }
+                    .accessibilityLabel("Projects and re-stacking").disabled(model.isBusy || model.isAdjusting)
+                Button { showHelp = true } label: { Image(systemName: "questionmark.circle") }.accessibilityLabel("Capture instructions")
+            }
             .task { await model.start() }
             .onChange(of: scenePhase) { phase in
                 if phase == .active { Task { await model.start() } }
                 else if phase == .background { model.suspend() }
             }
             .sheet(isPresented: $showHelp) { help }
+            .sheet(isPresented: $showProjects, onDismiss: { Task { await model.start() } }) { ProjectGalleryView() }
             .sheet(item: $model.result) { result in
                 if result.mode == .burst { BurstResultView(result: result) }
                 else { ResultView(result: result) }
@@ -130,7 +146,19 @@ struct ContentView: View {
                 if model.settings.mode.sweepsFocus { focusControl(title: "Far endpoint", value: $model.settings.far) }
             }
             if model.settings.mode.sweepsFocus {
-                Stepper("Focus positions: \(model.settings.focusSteps)", value: $model.settings.focusSteps, in: 3...12)
+                Stepper("Focus positions: \(model.settings.focusSteps)", value: $model.settings.focusSteps, in: 3...20)
+                Picker("Focus spacing", selection: $model.settings.focusSpacing) {
+                    ForEach(FocusSpacing.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented)
+                Text("Near dense puts more focus positions near the closest end. Spacing is based on lens position, not a measured depth map.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if model.settings.mode != .burst {
+                Picker("Capture priority", selection: $model.settings.captureQuality) {
+                    ForEach(CaptureQuality.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented)
+                Text("Speed uses lighter camera processing; Quality favors detail. Output resolution stays the same.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if model.settings.mode == .both || model.settings.mode == .clean {
                 Stepper("Photos per position: \(model.settings.framesPerPosition)", value: $model.settings.framesPerPosition, in: 2...6)
@@ -200,6 +228,11 @@ struct ContentView: View {
                     Text("Processing uses normal camera photos, not RAW. A stack is not guaranteed to beat Apple's Camera processing. Compare results on your own subjects.")
                     Text("Photos are processed on this iPhone. No account or internet connection is needed to take and stack photos.")
                 }
+                Section("Projects and versions") {
+                    Text("Open Projects from the stacked-squares button. Reopen previous captures, inspect originals, exclude moved or blurred frames and re-stack into a separate result. Keep originals enabled when capturing.")
+                    Text("Detail sharpening and JPEG/HEIC export create separate files. Set detail to 0% for format conversion alone. This is conventional sharpening, not neural reconstruction or added optical detail.")
+                    Text("Hold the comparison label in Projects to show the original result. Earlier captures are supported when their original files and settings remain available.")
+                }
             }
             .navigationTitle("Getting started")
             .toolbar { Button("Done") { showHelp = false } }
@@ -239,6 +272,8 @@ private struct ResultView: View {
                         Label(showReference ? "Share best single" : "Share stack", systemImage: "square.and.arrow.up")
                     }
                     Text(result.originalsSaved ? "The original camera photos and both results are saved in Files → On My iPhone → MacroStack → Stacks." : "Both results are saved in Files → On My iPhone → MacroStack → Stacks.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("After Done, open Projects to inspect source frames, re-stack or create a separate detail-enhanced version.")
                         .font(.caption).foregroundStyle(.secondary)
                 }.padding()
             }

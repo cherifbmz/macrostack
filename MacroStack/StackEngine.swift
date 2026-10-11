@@ -286,8 +286,10 @@ final class StackWorker {
     private let queue = DispatchQueue(label: "macrostack.processing", qos: .userInitiated)
     private var engine: StackEngine?
 
-    func begin(maximumDimension: Int, subjectRegion: CGRect? = nil, bestFrameOnly: Bool = false) async throws {
-        try await run { self.engine = try StackEngine(maximumDimension: maximumDimension, subjectRegion: subjectRegion, bestFrameOnly: bestFrameOnly) }
+    func begin(maximumDimension: Int, subjectRegion: CGRect? = nil, bestFrameOnly: Bool = false,
+               registerImages: Bool = true, protectMotion: Bool = true) async throws {
+        try await run { self.engine = try StackEngine(maximumDimension: maximumDimension, registerImages: registerImages,
+            protectMotion: protectMotion, subjectRegion: subjectRegion, bestFrameOnly: bestFrameOnly) }
     }
 
     func add(data: Data) async throws -> Bool {
